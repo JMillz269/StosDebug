@@ -14,7 +14,7 @@ struct Scripts: Equatable {
     let persistent: Bool
     
     static var customScript: [String: Scripts] = [:]
-    
+    static let legacy        = Scripts("classic")
     static let classic        = Scripts("classic")
     static let classic_geode  = Scripts("classic_geode")
     static let universal      = Scripts("universal")
