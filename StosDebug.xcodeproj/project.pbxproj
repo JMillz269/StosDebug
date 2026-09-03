@@ -30,7 +30,6 @@
 				scripts/classic_geode.js,
 				scripts/classic.js,
 				scripts/universal.js,
-				"scripts/universal+manic.jitrpl",
 			);
 			target = 4E8D91592F76337600F5E970 /* StosDebug */;
 		};
@@ -44,7 +43,6 @@
 				scripts/classic_geode.js,
 				scripts/classic.js,
 				scripts/universal.js,
-				"scripts/universal+manic.jitrpl",
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
