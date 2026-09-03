@@ -18,7 +18,6 @@ struct Scripts: Equatable {
     static let classic        = Scripts("classic")
     static let classic_geode  = Scripts("classic_geode")
     static let universal      = Scripts("universal")
-    static let `universal+manic` = Scripts("universal+manic")
     
     static func custom(name: String, url: URL) -> Scripts {
         Scripts(name, customURL: url)
@@ -43,7 +42,6 @@ struct Scripts: Equatable {
     }
     
     enum Apps: String, CaseIterable {
-        case manic
         case melonx
         case amethyst
         case utm
@@ -54,8 +52,6 @@ struct Scripts: Equatable {
         
         var script: Scripts {
             switch self {
-            case .manic:
-                return .`universal+manic`
             case .utm, .dolphin, .flycast:
                 return .classic
             case .geode:
