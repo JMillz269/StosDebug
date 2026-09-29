@@ -18,6 +18,8 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>stosdebug</string>
+				<string>stikdebug</string>
+				<string>stikjit</string>
 			</array>
 		</dict>
 	</array>
