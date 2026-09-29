@@ -48,7 +48,7 @@ struct ContentView: View {
                         shouldLaunchApp = params.relaunchApp ?? true
                     }
                     
-                    if ProcessInfo.processInfo.hasTXM {
+                    if ProcessInfo.processInfo.detectedTXM {
                         showingScript = true
                         
                         if let script = params.scriptData {
@@ -119,7 +119,7 @@ struct AppView: View {
                                 }
                                 
                                 Thread.detachNewThread {
-                                    if ProcessInfo.processInfo.hasTXM {
+                                    if ProcessInfo.processInfo.detectedTXM {
                                         let script = Scripts.getScriptFromName(apps[index].name)
                                         
                                         _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier, useScript: true, script: script) { viewModel in
@@ -481,7 +481,7 @@ class LocationDelegate: NSObject, CLLocationManagerDelegate {
     let locationManager = CLLocationManager()
 
     func start() {
-        guard ProcessInfo.processInfo.hasTXM else { return }
+        guard ProcessInfo.processInfo.detectedTXM else { return }
         
         locationManager.delegate = self
         locationManager.allowsBackgroundLocationUpdates = true
