@@ -108,6 +108,14 @@ typedef struct HouseArrestClientHandle HouseArrestClientHandle;
 typedef struct IdeviceHandle IdeviceHandle;
 
 /**
+ * C-Compatible Cryptex Struct
+ */
+typedef struct InstalledCryptexC {
+    char *identifier;
+    char *version;
+} InstalledCryptexC;
+
+/**
  * Opaque C-compatible handle to a PairingFile
  */
 typedef struct IdevicePairingFile IdevicePairingFile;
@@ -117,6 +125,8 @@ typedef struct IdeviceProviderHandle IdeviceProviderHandle;
 typedef struct IdeviceSocketHandle IdeviceSocketHandle;
 
 typedef struct ImageMounterHandle ImageMounterHandle;
+
+typedef struct Cryptex1AssetsHandle Cryptex1AssetsHandle;
 
 typedef struct InstallationProxyClientHandle InstallationProxyClientHandle;
 
@@ -3770,6 +3780,49 @@ void misagent_client_free(struct MisagentClientHandle *handle);
  */
 struct IdeviceFfiError *image_mounter_connect(struct IdeviceProviderHandle *provider,
                                               struct ImageMounterHandle **client);
+
+/**
+ * Loads Cryptex1 Developer Disk Image assets from a restore directory.
+ *
+ * The directory must contain the Cryptex DDI files expected by idevice,
+ * including Image.dmg, Image.dmg.trustcache, Image.dmg.cryptex_info,
+ * Image.dmg.root_hash, and BuildManifest.plist.
+ */
+struct IdeviceFfiError *cryptex1_assets_load(
+    const char *restore_dir,
+    struct Cryptex1AssetsHandle **handle
+);
+
+/**
+ * Frees Cryptex1 Developer Disk Image assets.
+ */
+void cryptex1_assets_free(struct Cryptex1AssetsHandle *handle);
+
+/**
+ * Installs the Cryptex-based Developer Disk Image.
+ */
+struct IdeviceFfiError *cryptexd_install_ddi(
+    struct AdapterHandle *provider,
+    struct RsdHandshakeHandle *handshake,
+    struct Cryptex1AssetsHandle *assets,
+    struct InstalledCryptexC **installed
+);
+
+/**
+ * Queries the installed Cryptex-based Developer Disk Image.
+ */
+struct IdeviceFfiError *cryptexd_installed_ddi(
+    struct AdapterHandle *provider,
+    struct RsdHandshakeHandle *handshake,
+    struct InstalledCryptexC **installed
+);
+
+/**
+ * Frees an InstalledCryptexC returned by cryptexd_installed_ddi.
+ */
+void cryptexd_free_installed_cryptex(
+    struct InstalledCryptexC *cryptex
+);
 
 /**
  * Creates a new ImageMounter via RSD
