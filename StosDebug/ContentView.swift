@@ -333,9 +333,9 @@ struct SettingsView: View {
             }
                 
                 if !ProcessInfo.processInfo.detectedTXM {
-                    Toggle("Force TXM", isOff: $forceTXM)
+                    Toggle("Force TXM", isOn: $forceTXM)
+                } 
                 
-            } 
                 footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.detectedTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
