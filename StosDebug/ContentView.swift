@@ -325,8 +325,14 @@ struct SettingsView: View {
                 if !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
                 }
+                
             } footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.detectedTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
+            }
+            Section("TXM Debug") {
+                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
+                Text("Force TXM: \(forceTXM)")
+                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
             }
         }
         .onAppear() {
@@ -334,13 +340,7 @@ struct SettingsView: View {
         }
     }
 }
-List {
-Section("TXM Debug") {
-Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM.description)")
-Text("Force TXM: \(forceTXM.description)")
-Text("Has TXM: \(ProcessInfo.processInfo.hasTXM.description)")
-}
-}
+
 private extension DeviceManager {
     var mountStatusText: String {
         switch isMounted {
