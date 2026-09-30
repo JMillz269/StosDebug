@@ -591,6 +591,88 @@ private func mountCryptexDDI() async throws {
         
         return data
     }
+
+func runUnmountDDI() {
+    Task {
+        do {
+            try await unmountDDI()
+
+            await MainActor.run {
+                self.isMounted = .notMounted
+                self.isMounting = .none
+            }
+        } catch {
+            await MainActor.run {
+                self.isMounted = .failure(issue: error.localizedDescription)
+            }
+        }
+    }
+}
+
+private func unmountDDI() async throws {
+    guard let adapter, let handshake else {
+        throw "Tunnel not initialized"
+    }
+
+    // Get installed DDI information
+    var installed: UnsafeMutablePointer<InstalledCryptexC>?
+
+    let installedError = cryptexd_installed_ddi(
+        adapter,
+        handshake,
+        &installed
+    )
+
+    if let installedError {
+        throw installedError.pointee.message.string
+    }
+
+    guard let installed else {
+        throw "No Cryptex DDI is currently installed"
+    }
+
+    defer {
+        cryptexd_free_installed_cryptex(installed)
+    }
+
+    guard let identifierPtr = installed.pointee.identifier else {
+        throw "Unable to determine installed Cryptex identifier"
+    }
+
+    let identifier = String(cString: identifierPtr)
+
+    // Create a new Cryptexd connection
+    var cryptexHandle: CryptexdHandle?
+
+    let connectError = cryptexd_connect_rsd(
+        adapter,
+        handshake,
+        &cryptexHandle
+    )
+
+    if let connectError {
+        throw connectError.pointee.message.string
+    }
+
+    guard let cryptexHandle else {
+        throw "Failed to create Cryptexd handle"
+    }
+
+    let identifierCString = strdup(identifier)
+    defer {
+        free(identifierCString)
+    }
+
+    let uninstallError = cryptexd_uninstall(
+        cryptexHandle,
+        identifierCString,
+        nil
+    )
+
+    if let uninstallError {
+        throw uninstallError.pointee.message.string
+    }
+}    
     
     func runCheckMounted(mountIfNeeded: Bool = false) {
         checkMounted?.cancel()
