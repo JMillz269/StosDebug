@@ -1,3 +1,5 @@
+import Foundation
+
 public extension ProcessInfo {
     var detectedTXM: Bool {
         let hardware = hardwareIdentifier()
