@@ -334,8 +334,13 @@ struct SettingsView: View {
         }
     }
 }
-
-
+List {
+Section("TXM Debug") {
+Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM.description)")
+Text("Force TXM: \(forceTXM.description)")
+Text("Has TXM: \(ProcessInfo.processInfo.hasTXM.description)")
+}
+}
 private extension DeviceManager {
     var mountStatusText: String {
         switch isMounted {
