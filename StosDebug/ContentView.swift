@@ -308,19 +308,30 @@ struct SettingsView: View {
                 } else if deviceManager.isMounting == .loading {
                     Text("DDI is currently mounting...")
                 } else {
-                    HStack {
-                        Button("Mount DDI") {}
-                            .disabled(true)
-                        
-                        Spacer()
-                        
-                        Button {
-                            Alert.showSyncAlert(title: "DDI is already mounted", message: "The Developer Disk Image is already mounted.", hasCancel: false) { _ in}
-                        } label: {
-                            Image(systemName: "questionmark.circle")
-                        }
-                    }
-                }
+    HStack {
+        Button("Mount DDI") {}
+            .disabled(true)
+
+        Spacer()
+
+        Button("Unmount DDI") {
+            deviceManager.runUnmountDDI()
+        }
+        .foregroundColor(.red)
+
+        Spacer()
+
+        Button {
+            Alert.showSyncAlert(
+                title: "DDI is already mounted",
+                message: "The Developer Disk Image is already mounted.",
+                hasCancel: false
+            ) { _ in }
+        } label: {
+            Image(systemName: "questionmark.circle")
+        }
+    }
+}
 
                 if deviceManager.isMounted == .success {
                     Button("Unmount DDI") {
