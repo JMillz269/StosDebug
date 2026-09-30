@@ -332,7 +332,7 @@ struct SettingsView: View {
                 }
             }
                 
-                if !ProcessInfo.processInfo.detectedTXM {
+                !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
                 }
                 
