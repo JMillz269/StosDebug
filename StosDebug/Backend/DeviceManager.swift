@@ -27,14 +27,40 @@ typealias ProcessControlHandle = OpaquePointer
 typealias InstallationProxyClientHandle = OpaquePointer
 typealias SpringBoardServicesClientHandle = OpaquePointer
 typealias MounterClientHandle = OpaquePointer
+typealias CryptexdHandle = OpaquePointer
 
 enum DeveloperDiskImage: String {
-    case image = "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg"
-    case imagetrustcache = "https://github.com/doronz88/DeveloperDiskImage/blob/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg.trustcache"
-    case buildManifest = "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist"
+    case personalizedImage =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg"
+
+    case personalizedTrustCache =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg.trustcache"
+
+    case personalizedBuildManifest =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist"
+
+    case cryptexImage =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Cryptex/Image.dmg"
+
+    case cryptexTrustCache =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Cryptex/Image.dmg.trustcache"
+
+    case cryptexBuildManifest =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Cryptex/BuildManifest.plist"
+
+    case cryptexInfo =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Cryptex/Image.dmg.cryptex_info"
+
+    case cryptexRootHash =
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Cryptex/Image.dmg.root_hash"
 }
 
+private var usesCryptexDDI: Bool {
+    let version = ProcessInfo.processInfo.operatingSystemVersion
 
+    return version.majorVersion > 26 ||
+        (version.majorVersion == 26 && version.minorVersion >= 4)
+}
 
 final class DeviceManager: ObservableObject {
     static let shared = DeviceManager()
@@ -59,33 +85,42 @@ final class DeviceManager: ObservableObject {
     @Published var isMounting: DeviceError = .none
     
     func runMountDDI(_ check: Bool = false) {
-        if check && isMounting == .success {
-            return
+    if check && isMounting == .success {
+        return
+    }
+
+    mountTask?.cancel()
+
+    mountTask = Task {
+        await MainActor.run {
+            isMounting = .loading
         }
-        
-        mountTask?.cancel()
-        mountTask = Task {
-            await MainActor.run {
-                isMounting = .loading
-            }
-            do {
+
+        do {
+            if usesCryptexDDI {
+                try await mountCryptexDDI()
+            } else {
                 try await mountPersonalDDI(
-                    imagePath: DeveloperDiskImage.image.rawValue,
-                    trustcachePath: DeveloperDiskImage.imagetrustcache.rawValue,
-                    manifestPath: DeveloperDiskImage.buildManifest.rawValue
+                    imagePath: DeveloperDiskImage.personalizedImage.rawValue,
+                    trustcachePath: DeveloperDiskImage.personalizedTrustCache.rawValue,
+                    manifestPath: DeveloperDiskImage.personalizedBuildManifest.rawValue
                 )
-                await MainActor.run {
-                    isMounting = .success
-                }
-                
-                runCheckMounted()
-            } catch {
-                await MainActor.run {
-                    isMounting = .failure(issue: error.localizedDescription)
-                }
+            }
+
+            await MainActor.run {
+                isMounting = .success
+            }
+
+            runCheckMounted()
+        } catch {
+            await MainActor.run {
+                isMounting = .failure(issue: error.localizedDescription)
             }
         }
     }
+}
+
+    
     
     func setupTunnel() async throws  {
         if !fileManager.fileExists(atPath: pairingFileURL1.path) && fileManager.fileExists(atPath: pairingFileURL2.path) {
@@ -395,36 +430,151 @@ final class DeviceManager: ObservableObject {
             return Data(bytes: iconData!, count: iconDataLen)
         }.value
     }
-    
     func isMounted() async throws -> Bool {
-        var mounterClient: MounterClientHandle?
-        var err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
-        
-        if let err {
-            throw err.pointee.message.string
+    guard let adapter, let handshake else {
+        throw "Tunnel not initialized"
+    }
+
+    var cryptex: UnsafeMutablePointer<InstalledCryptexC>?
+    let cryptexError = cryptexd_installed_ddi(
+        adapter,
+        handshake,
+        &cryptex
+    )
+
+    defer {
+        cryptexd_free_installed_cryptex(cryptex)
+    }
+
+    if cryptex != nil {
+        return true
+    }
+
+    var mounterClient: MounterClientHandle?
+    let mounterError = image_mounter_connect_rsd(
+        adapter,
+        handshake,
+        &mounterClient
+    )
+
+    if let mounterError {
+        if let cryptexError {
+            throw cryptexError.pointee.message.string
         }
-        
-        var devices: UnsafeMutablePointer<plist_t?>? = nil
-        var deviceLength: size_t = 0
-        
-        err = image_mounter_copy_devices(mounterClient, &devices, &deviceLength)
-        if let err {
-            throw err.pointee.message.string
-        }
-        
-        if let devicesPointer = devices {
-            for i in 0..<Int(deviceLength) {
-                if let device = devicesPointer[i] {
-                    plist_free(device)
-                }
+
+        throw mounterError.pointee.message.string
+    }
+
+    defer {
+        image_mounter_free(mounterClient)
+    }
+
+    var devices: UnsafeMutablePointer<plist_t?>?
+    var deviceCount: size_t = 0
+
+    if let error = image_mounter_copy_devices(
+        mounterClient,
+        &devices,
+        &deviceCount
+    ) {
+        throw error.pointee.message.string
+    }
+
+    if let devices {
+        for index in 0..<Int(deviceCount) {
+            if let device = devices[index] {
+                plist_free(device)
             }
         }
-        
-        idevice_data_free(devices, UInt(deviceLength * MemoryLayout<UnsafeMutablePointer<plist_t>>.size))
-        image_mounter_free(mounterClient)
-        
-        return deviceLength > 0
+
+        idevice_data_free(
+            UnsafeMutableRawPointer(devices)
+                .assumingMemoryBound(to: UInt8.self),
+            UInt(deviceCount * MemoryLayout<plist_t?>.stride)
+        )
     }
+
+    return deviceCount > 0
+}
+
+private func mountCryptexDDI() async throws {
+    guard let adapter, let handshake else {
+        throw "Tunnel not initialized"
+    }
+
+    let fileManager = FileManager.default
+    let ddiDirectory = URL.documentsDirectory
+        .appendingPathComponent("DDI", isDirectory: true)
+
+    try fileManager.createDirectory(
+        at: ddiDirectory,
+        withIntermediateDirectories: true
+    )
+
+    let files: [(name: String, url: String)] = [
+        (
+            "BuildManifest.plist",
+            DeveloperDiskImage.cryptexBuildManifest.rawValue
+        ),
+        (
+            "Image.dmg",
+            DeveloperDiskImage.cryptexImage.rawValue
+        ),
+        (
+            "Image.dmg.trustcache",
+            DeveloperDiskImage.cryptexTrustCache.rawValue
+        ),
+        (
+            "Image.dmg.cryptex_info",
+            DeveloperDiskImage.cryptexInfo.rawValue
+        ),
+        (
+            "Image.dmg.root_hash",
+            DeveloperDiskImage.cryptexRootHash.rawValue
+        )
+    ]
+
+    for file in files {
+        let destination = ddiDirectory
+            .appendingPathComponent(file.name)
+
+        if fileManager.fileExists(atPath: destination.path) {
+            continue
+        }
+
+        let data = try await downloadDataAsync(from: file.url)
+        try data.write(to: destination, options: .atomic)
+    }
+
+    var assets: OpaquePointer?
+
+    let loadError = ddiDirectory.path.withCString { path in
+        cryptex1_assets_load(path, &assets)
+    }
+
+    if let loadError {
+        throw loadError.pointee.message.string
+    }
+
+    guard let assets else {
+        throw "Cryptex DDI assets could not be loaded"
+    }
+
+    defer {
+        cryptex1_assets_free(assets)
+    }
+
+    let installError = cryptexd_install_ddi(
+        adapter,
+        handshake,
+        assets,
+        nil
+    )
+
+    if let installError {
+        throw installError.pointee.message.string
+    }
+}
     
     func downloadDataAsync(from urlString: String) async throws -> Data {
         guard let url = URL(string: urlString) else {
@@ -442,6 +592,88 @@ final class DeviceManager: ObservableObject {
         
         return data
     }
+
+func runUnmountDDI() {
+    Task {
+        do {
+            try await unmountDDI()
+
+            await MainActor.run {
+                self.isMounted = .notMounted
+                self.isMounting = .none
+            }
+        } catch {
+            await MainActor.run {
+                self.isMounted = .failure(issue: error.localizedDescription)
+            }
+        }
+    }
+}
+
+private func unmountDDI() async throws {
+    guard let adapter, let handshake else {
+        throw "Tunnel not initialized"
+    }
+
+    // Get installed DDI information
+    var installed: UnsafeMutablePointer<InstalledCryptexC>?
+
+    let installedError = cryptexd_installed_ddi(
+        adapter,
+        handshake,
+        &installed
+    )
+
+    if let installedError {
+        throw installedError.pointee.message.string
+    }
+
+    guard let installed else {
+        throw "No Cryptex DDI is currently installed"
+    }
+
+    defer {
+        cryptexd_free_installed_cryptex(installed)
+    }
+
+    guard let identifierPtr = installed.pointee.identifier else {
+        throw "Unable to determine installed Cryptex identifier"
+    }
+
+    let identifier = String(cString: identifierPtr)
+
+    // Create a new Cryptexd connection
+    var cryptexHandle: CryptexdHandle?
+
+    let connectError = cryptexd_connect_rsd(
+        adapter,
+        handshake,
+        &cryptexHandle
+    )
+
+    if let connectError {
+        throw connectError.pointee.message.string
+    }
+
+    guard let cryptexHandle else {
+        throw "Failed to create Cryptexd handle"
+    }
+
+    let identifierCString = strdup(identifier)
+    defer {
+        free(identifierCString)
+    }
+
+    let uninstallError = cryptexd_uninstall(
+        cryptexHandle,
+        identifierCString,
+        nil
+    )
+
+    if let uninstallError {
+        throw uninstallError.pointee.message.string
+    }
+}    
     
     func runCheckMounted(mountIfNeeded: Bool = false) {
         checkMounted?.cancel()

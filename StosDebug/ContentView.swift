@@ -308,33 +308,47 @@ struct SettingsView: View {
                 } else if deviceManager.isMounting == .loading {
                     Text("DDI is currently mounting...")
                 } else {
-                    HStack {
-                        Button("Mount DDI") {}
-                            .disabled(true)
-                        
-                        Spacer()
-                        
-                        Button {
-                            Alert.showSyncAlert(title: "DDI is already mounted", message: "The Developer Disk Image is already mounted.", hasCancel: false) { _ in}
-                        } label: {
-                            Image(systemName: "questionmark.circle")
-                        }
-                    }
+    HStack {
+        Button("Mount DDI") {}
+            .disabled(true)
+
+        Spacer()
+
+        Button {
+            Alert.showSyncAlert(
+                title: "DDI is already mounted",
+                message: "The Developer Disk Image is already mounted.",
+                hasCancel: false
+            ) { _ in }
+        } label: {
+            Image(systemName: "questionmark.circle")
+        }
+    }
+}
+
+                if deviceManager.isMounted == .success {
+                    Button("Unmount DDI") {
+                        deviceManager.runUnmountDDI()
                 }
+            }
                 
-                if !ProcessInfo.processInfo.alhasTXM {
+                if !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
                 }
              footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.alhasTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
+//            Section("TXM Debug") {
+//                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
+//                Text("Force TXM: \(forceTXM)")
+//                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
+//            }
         }
         .onAppear() {
             deviceManager.runCheckMounted(mountIfNeeded: true)
         }
     }
 }
-
 
 private extension DeviceManager {
     var mountStatusText: String {
@@ -475,24 +489,6 @@ struct AppListRow: View {
         .shadow(radius: 10)
     }
 }
-
-extension FileManager {
-    func filePath(atPath path: String, withLength length: Int) -> String? {
-        guard let file = try? contentsOfDirectory(atPath: path).filter({ $0.count == length }).first else { return nil }
-        return "\(path)/\(file)"
-    }
-}
-
-public extension ProcessInfo {
-    var alhasTXM: Bool {
-        { if let boot = FileManager.default.filePath(atPath: "/System/Volumes/Preboot", withLength: 36), let file = FileManager.default.filePath(atPath: "\(boot)/boot", withLength: 96) { return access("\(file)/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", F_OK) == 0 } else { return (FileManager.default.filePath(atPath: "/private/preboot", withLength: 96).map { access("\($0)/usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4", F_OK) == 0 }) ?? false } }()
-    }
-    
-    var hasTXM: Bool {
-        UserDefaults.standard.bool(forKey: "forceTXM") ? true : alhasTXM
-    }
-}
-
 
 class LocationDelegate: NSObject, CLLocationManagerDelegate {
 
