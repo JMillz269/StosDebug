@@ -27,6 +27,7 @@ typealias ProcessControlHandle = OpaquePointer
 typealias InstallationProxyClientHandle = OpaquePointer
 typealias SpringBoardServicesClientHandle = OpaquePointer
 typealias MounterClientHandle = OpaquePointer
+typealias CryptexdHandle = OpaquePointer
 
 enum DeveloperDiskImage: String {
     case personalizedImage =
