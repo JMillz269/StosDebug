@@ -332,8 +332,8 @@ struct SettingsView: View {
                 }
             }
                 
-                !ProcessInfo.processInfo.detectedTXM {
-                    Toggle("Force TXM", isOn: $forceTXM)
+               if !ProcessInfo.processInfo.detectedTXM {
+                    Button("Force TXM", isOff: $forceTXM)
                 }
                 
             } footer: {
