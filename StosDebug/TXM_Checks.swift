@@ -1,7 +1,7 @@
 import Foundation
 
 public extension ProcessInfo {
-    var hasTXM: Bool {
+    var detectedTXM: Bool {
         if UserDefaults.standard.bool(forKey: "forceTXM") {
             return true
         }
