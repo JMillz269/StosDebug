@@ -321,6 +321,12 @@ struct SettingsView: View {
                         }
                     }
                 }
+
+                if deviceManager.isMounted == .success {
+                    Button("Unmount DDI") {
+                        deviceManager.runUnmountDDI()
+                }
+            }
                 
                 if !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
