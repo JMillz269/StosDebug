@@ -339,11 +339,11 @@ struct SettingsView: View {
                 footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.detectedTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
-            Section("TXM Debug") {
-                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
-                Text("Force TXM: \(forceTXM)")
-                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
-            }
+//            Section("TXM Debug") {
+//                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
+//                Text("Force TXM: \(forceTXM)")
+//                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
+//            }
         }
         .onAppear() {
             deviceManager.runCheckMounted(mountIfNeeded: true)
