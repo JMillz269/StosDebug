@@ -314,13 +314,6 @@ struct SettingsView: View {
 
         Spacer()
 
-        Button("Unmount DDI") {
-            deviceManager.runUnmountDDI()
-        }
-        .foregroundColor(.red)
-
-        Spacer()
-
         Button {
             Alert.showSyncAlert(
                 title: "DDI is already mounted",
