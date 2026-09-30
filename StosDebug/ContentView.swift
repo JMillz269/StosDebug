@@ -334,10 +334,9 @@ struct SettingsView: View {
                 
                 if !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
-                } 
-            }
-                footer: {
-                Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.detectedTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
+                }
+             footer: {
+                Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.alhasTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
 //            Section("TXM Debug") {
 //                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
