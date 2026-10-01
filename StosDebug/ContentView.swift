@@ -342,7 +342,7 @@ struct SettingsView: View {
 //                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
 //                Text("Force TXM: \(forceTXM)")
 //                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
-            }
+//            }
         }
         .onAppear() {
             deviceManager.runCheckMounted(mountIfNeeded: true)
