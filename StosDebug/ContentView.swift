@@ -349,7 +349,7 @@ struct SettingsView: View {
         }
     }
 }
-}
+
 private extension DeviceManager {
     var mountStatusText: String {
         switch isMounted {
