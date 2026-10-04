@@ -16,6 +16,11 @@ struct StosDebugApp: App {
             diskCapacity: 512 * 1024 * 1024
         )
         URLCache.shared = cache
+        
+        UserDefaults.standard.register(defaults: [
+            "keepAliveLocation": true,
+            "keepAliveAudio": true
+        ])
     }
     
     var body: some Scene {
