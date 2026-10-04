@@ -304,7 +304,11 @@ final class DeviceManager: ObservableObject {
             
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
-            jsViewModel = viewModel
+            if Thread.isMainThread {
+                jsViewModel = viewModel
+            } else {
+                DispatchQueue.main.sync { self.jsViewModel = viewModel }
+            }
             
             whenJSCreated?(viewModel)
            
