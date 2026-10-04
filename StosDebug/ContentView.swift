@@ -28,7 +28,7 @@ struct ContentView: View {
         }
         .onAppear {
             if ProcessInfo.processInfo.hasTXM {
-                BackgroundLocationManager.shared.start()
+                BackgroundLocationManager.shared.requestAuthorizationIfNeeded()
             }
         }
         .onOpenURL { url in
@@ -382,7 +382,7 @@ struct SettingsView: View {
                 Toggle("Location Keep-Alive", isOn: $keepAliveLocation)
                     .onChange(of: keepAliveLocation) { _, isOn in
                         if isOn {
-                            BackgroundLocationManager.shared.start()
+                            BackgroundLocationManager.shared.requestAuthorizationIfNeeded()
                         } else {
                             BackgroundLocationManager.shared.stop()
                         }
