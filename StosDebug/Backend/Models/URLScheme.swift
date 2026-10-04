@@ -1,22 +1,25 @@
-//
-//  URLScheme.swift
-//  StosDebug
-//
-//  Created by Stossy11 on 29/3/2026.
-//
-
 import Foundation
 
 struct URLQueryDecoder {
     func decode<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = components?.queryItems ?? []
-        let dict = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, String)? in
-            guard let value = item.value else { return nil }
-            return (item.name, value)
-        })
+
+        var dict: [String: String] = [:]
+        for item in items {
+            guard let value = item.value else { continue }
+            dict[normalize(item.name)] = value
+        }
+
         let decoder = _QueryDecoder(dict: dict)
         return try T(from: decoder)
+    }
+
+    static func normalize(_ key: String) -> String {
+        key
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
     }
 }
 
@@ -28,6 +31,7 @@ private struct _QueryDecoder: Decoder {
     func container<Key: CodingKey>(keyedBy type: Key.Type) -> KeyedDecodingContainer<Key> {
         KeyedDecodingContainer(_KeyedContainer(dict: dict, codingPath: codingPath))
     }
+
     func unkeyedContainer() throws -> UnkeyedDecodingContainer { fatalError("Unsupported") }
     func singleValueContainer() throws -> SingleValueDecodingContainer { fatalError("Unsupported") }
 }
@@ -35,64 +39,68 @@ private struct _QueryDecoder: Decoder {
 private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     let dict: [String: String]
     var codingPath: [CodingKey]
+
     var allKeys: [Key] { dict.keys.compactMap { Key(stringValue: $0) } }
-    
-    func contains(_ key: Key) -> Bool { dict[key.stringValue] != nil }
-    func decodeNil(forKey key: Key) -> Bool { dict[key.stringValue] == nil }
-    
+
+    private func raw(_ key: Key) -> String? {
+        dict[URLQueryDecoder.normalize(key.stringValue)]
+    }
+
+    func contains(_ key: Key) -> Bool { raw(key) != nil }
+    func decodeNil(forKey key: Key) -> Bool { raw(key) == nil }
+
     func decode(_ type: String.Type, forKey key: Key) throws -> String {
-        guard let value = dict[key.stringValue] else { throw missing(key) }
+        guard let value = raw(key) else { throw missing(key) }
         return value
     }
-    
+
     func decode(_ type: Int.Type, forKey key: Key) throws -> Int {
-        guard let raw = dict[key.stringValue], let value = Int(raw) else { throw missing(key) }
+        guard let rawValue = raw(key), let value = Int(rawValue) else { throw missing(key) }
         return value
     }
-    
+
     func decode(_ type: Bool.Type, forKey key: Key) throws -> Bool {
-        guard let raw = dict[key.stringValue], let value = Bool(raw) else { throw missing(key) }
+        guard let rawValue = raw(key), let value = Bool(rawValue) else { throw missing(key) }
         return value
     }
-    
+
     func decode(_ type: Double.Type, forKey key: Key) throws -> Double {
-        guard let raw = dict[key.stringValue], let value = Double(raw) else { throw missing(key) }
+        guard let rawValue = raw(key), let value = Double(rawValue) else { throw missing(key) }
         return value
     }
-    
+
     func decode<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T {
-        // use string conversion if unable to use any other type
-        guard let raw = dict[key.stringValue] else { throw missing(key) }
-        guard let value = raw as? T else { throw missing(key) }
+        guard let rawValue = raw(key) else { throw missing(key) }
+        guard let value = rawValue as? T else { throw missing(key) }
         return value
     }
-    
+
     func decodeIfPresent(_ type: String.Type, forKey key: Key) throws -> String? {
-        dict[key.stringValue]
+        raw(key)
     }
 
     func decodeIfPresent(_ type: Int.Type, forKey key: Key) throws -> Int? {
-        dict[key.stringValue].flatMap(Int.init)
+        raw(key).flatMap(Int.init)
     }
 
     func decodeIfPresent(_ type: Bool.Type, forKey key: Key) throws -> Bool? {
-        dict[key.stringValue].flatMap(Bool.init)
+        raw(key).flatMap(Bool.init)
     }
 
     func decodeIfPresent(_ type: Double.Type, forKey key: Key) throws -> Double? {
-        dict[key.stringValue].flatMap(Double.init)
+        raw(key).flatMap(Double.init)
     }
 
     func decodeIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T? {
-        guard let raw = dict[key.stringValue] else { return nil }
-        return raw as? T
+        guard let rawValue = raw(key) else { return nil }
+        return rawValue as? T
     }
-    
+
     func nestedContainer<NestedKey: CodingKey>(keyedBy type: NestedKey.Type, forKey key: Key) throws -> KeyedDecodingContainer<NestedKey> { fatalError("Unsupported") }
     func nestedUnkeyedContainer(forKey key: Key) throws -> UnkeyedDecodingContainer { fatalError("Unsupported") }
     func superDecoder() throws -> Decoder { fatalError("Unsupported") }
     func superDecoder(forKey key: Key) throws -> Decoder { fatalError("Unsupported") }
-    
+
     private func missing(_ key: Key) -> DecodingError {
         DecodingError.keyNotFound(key, .init(codingPath: codingPath, debugDescription: "Missing key '\(key.stringValue)'"))
     }
@@ -100,15 +108,17 @@ private struct _KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 
 struct EnableJIT: Decodable, Sendable {
     var bundleId: String
-    var appName: String
+    var appName: String?
     var pid: Int?
     var relaunchApp: Bool?
     var forcePID: Bool?
     var script: String?
-    
+
     var scriptData: Data? {
         if let script {
-             return Data(base64Encoded: script)
-        } else { return nil }
+            return Data(base64Encoded: script)
+        } else {
+            return nil
+        }
     }
 }
