@@ -4,13 +4,13 @@ struct URLQueryDecoder {
     func decode<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = components?.queryItems ?? []
-
+    
         var dict: [String: String] = [:]
         for item in items {
             guard let value = item.value else { continue }
-            dict[normalize(item.name)] = value
+            dict[URLQueryDecoder.normalize(item.name)] = value  // ← Add 'URLQueryDecoder.' prefix
         }
-
+    
         let decoder = _QueryDecoder(dict: dict)
         return try T(from: decoder)
     }
