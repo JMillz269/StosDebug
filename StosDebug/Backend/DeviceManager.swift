@@ -201,7 +201,7 @@ final class DeviceManager: ObservableObject {
         defer {
             if useScript {
                 DispatchQueue.main.async {
-                    print("[Session] Stopping keep-alive layers")
+                    BackgroundLocationManager.shared.stop()
                     BackgroundAudioManager.shared.stop()
                     if bgTask != .invalid {
                         UIApplication.shared.endBackgroundTask(bgTask)
