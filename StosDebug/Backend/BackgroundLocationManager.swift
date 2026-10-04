@@ -36,6 +36,13 @@ final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
         manager.stopUpdatingLocation()
     }
     
+    func requestAuthorizationIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: "keepAliveLocation") else { return }
+        if manager.authorizationStatus == .notDetermined {
+            manager.requestAlwaysAuthorization()
+        }
+    }
+    
     func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
         switch m.authorizationStatus {
         case .authorizedAlways:
