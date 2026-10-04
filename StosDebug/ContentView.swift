@@ -537,7 +537,7 @@ struct AppListRow: View {
 class LocationDelegate: NSObject, CLLocationManagerDelegate {
     static let shared = LocationDelegate()
     private let locationManager = CLLocationManager()
-    private override init() { super.init() }
+    override init() { super.init() }
 
     func start() {
         print("[Loc] start() called, hasTXM=\(ProcessInfo.processInfo.hasTXM)")
