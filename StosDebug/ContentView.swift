@@ -275,6 +275,8 @@ struct AppView: View {
 struct SettingsView: View {
 
     @AppStorage("forceTXM") var forceTXM = false
+    @AppStorage("keepAliveLocation") var keepAliveLocation = true
+    @AppStorage("keepAliveAudio") var keepAliveAudio = true
     @ObservedObject var deviceManager: DeviceManager
     let pairingURL = DeviceManager.shared.pairingFileURL
     
@@ -376,6 +378,29 @@ struct SettingsView: View {
             } footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.hasTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
+
+            Section {
+                Toggle("Location Keep-Alive", isOn: $keepAliveLocation)
+                    .onChange(of: keepAliveLocation) { _, isOn in
+                        if isOn {
+                            BackgroundLocationManager.shared.start()
+                        } else {
+                            BackgroundLocationManager.shared.stop()
+                        }
+                    }
+                
+                Toggle("Background Audio Keep-Alive", isOn: $keepAliveAudio)
+                    .onChange(of: keepAliveAudio) { _, isOn in
+                        if !isOn {
+                            BackgroundAudioManager.shared.stop()
+                        }
+                    }
+            } header: {
+                Text("Keep Alive")
+            } footer: {
+                Text("Keeps StosDebug running in the background while a script is active. Location uses the background location indicator. Audio plays silence and may interrupt other audio apps' ducking. Turn both off only if you don't need background execution.")
+            }
+            
 //            Section("TXM Debug") {
 //                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
 //                Text("Force TXM: \(forceTXM)")
