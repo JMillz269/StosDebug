@@ -60,48 +60,49 @@ struct ContentView: View {
                 shouldLaunchApp = params.relaunchApp ?? true
             }
 
-            if ProcessInfo.processInfo.hasTXM {
-                showingScript = true
+let launchApp = shouldLaunchApp
+let bundleId = params.bundleId
+let pid = params.pid
+let forcePID = params.forcePID ?? false
 
-                if let script = params.scriptData {
-                    let scriptName = params.appName ?? params.bundleId
-                    _ = deviceManager.startDebugApp(
-                        bundleID: params.bundleId,
-                        pid: params.pid,
-                        forcePID: params.forcePID ?? false,
-                        launchApp: shouldLaunchApp,
-                        useScript: true,
-                        script: Scripts.custom(name: scriptName.lowercased(), data: script)
-                    )
-                } else {
-                    let scriptName: String
-                    if let appName = params.appName, !appName.isEmpty {
-                        scriptName = appName
-                    } else if isStikDebug {
-                        scriptName = params.bundleId
-                    } else {
-                        print("unable to decode: appName is required for stosdebug:// URLs")
-                        return
-                    }
+if ProcessInfo.processInfo.hasTXM {
+    // Base64 script wins; otherwise pick by appName; otherwise Universal.
+    let script: Scripts
+    if let data = params.scriptData {
+        let name = (params.appName?.isEmpty == false ? params.appName! : bundleId)
+        script = Scripts.custom(name: name.lowercased(), data: data)
+    } else if let appName = params.appName, !appName.isEmpty {
+        script = Scripts.getScriptFromName(appName)
+    } else if isStosDebug {
+        print("unable to decode: appName is required for stosdebug:// URLs without a script")
+        return
+    } else {
+        script = .universal
+    }
 
-                    let script = Scripts.getScriptFromName(scriptName)
-                    _ = deviceManager.startDebugApp(
-                        bundleID: params.bundleId,
-                        pid: params.pid,
-                        forcePID: params.forcePID ?? false,
-                        launchApp: shouldLaunchApp,
-                        useScript: true,
-                        script: script
-                    )
-                }
-            } else {
-                _ = deviceManager.startDebugApp(
-                    bundleID: params.bundleId,
-                    pid: params.pid,
-                    forcePID: params.forcePID ?? false,
-                    launchApp: shouldLaunchApp
-                )
-            }
+    // Run off the main thread, and only show the sheet once the view model exists.
+    Thread.detachNewThread {
+        _ = deviceManager.startDebugApp(
+            bundleID: bundleId,
+            pid: pid,
+            forcePID: forcePID,
+            launchApp: launchApp,
+            useScript: true,
+            script: script
+        ) { _ in
+            DispatchQueue.main.async { showingScript = true }
+        }
+    }
+} else {
+    Thread.detachNewThread {
+        _ = deviceManager.startDebugApp(
+            bundleID: bundleId,
+            pid: pid,
+            forcePID: forcePID,
+            launchApp: launchApp
+        )
+    }
+}
         }
 
     default:
