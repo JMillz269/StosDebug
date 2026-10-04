@@ -10,6 +10,7 @@ import SwiftUI
 import Combine
 import Network
 import BackgroundTasks
+import UIKit
 
 typealias RpPairingFileHandle = OpaquePointer
 typealias IdeviceProviderHandle = OpaquePointer
@@ -66,7 +67,7 @@ final class DeviceManager: ObservableObject {
     static let shared = DeviceManager()
     private init() {}
     
-    public var jsViewModel: RunJSViewModel?
+   @Published public var jsViewModel: RunJSViewModel?
     let fileManager = FileManager.default
     
     var pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
@@ -184,6 +185,33 @@ final class DeviceManager: ObservableObject {
     
     func startDebugApp(bundleID: String? = nil, pid: Int? = nil, forcePID: Bool = false, launchApp: Bool = false, useScript: Bool = false, script: Scripts? = nil, whenJSCreated: ((RunJSViewModel) -> Void)? = nil) -> Int {
         
+        // ---- Keep-alive for the whole session ----
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        if useScript {
+            DispatchQueue.main.sync {
+                bgTask = UIApplication.shared.beginBackgroundTask(withName: "StosDebugSession") {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+                BackgroundLocationManager.shared.start()
+                BackgroundAudioManager.shared.start()
+                print("[Session] Background task and keep-alive started")
+            }
+        }
+        defer {
+            if useScript {
+                DispatchQueue.main.async {
+                    BackgroundLocationManager.shared.stop()
+                    BackgroundAudioManager.shared.stop()
+                    if bgTask != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTask)
+                        bgTask = .invalid
+                    }
+                }
+            }
+        }
+        // ---- end keep-alive ----
+        
         guard let adapter, let handshake else {
             print("Tunnel not initialized")
             return 1
@@ -275,11 +303,15 @@ final class DeviceManager: ObservableObject {
             let semaphore: dispatch_semaphore_t = DispatchSemaphore(value: 0)
             
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
+
+            if Thread.isMainThread {
+                jsViewModel = viewModel
+            } else {
+                DispatchQueue.main.sync { self.jsViewModel = viewModel }
+            }
             
             whenJSCreated?(viewModel)
-            
-            jsViewModel = viewModel
-            
+           
             guard let scriptData = script.scriptData  else {
                 Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
                 debug_proxy_free(debugProxy)

@@ -9,10 +9,10 @@ import SwiftUI
 import Combine
 import JavaScriptCore
 
-class RunJSViewModel {
+final class RunJSViewModel: ObservableObject {
     var context: JSContext?
-    var logs: [String] = []
-    var scriptName: String = "Script"
+    @Published var logs: [String] = []
+    @Published var scriptName: String = "Script"
     var executionInterrupted = false
     var pid: Int
     var debugProxy: OpaquePointer?
@@ -28,7 +28,8 @@ class RunJSViewModel {
     
     func runScript(data: Data, name: String? = nil) {
         let scriptContent = String(data: data, encoding: .utf8)
-        scriptName = name ?? "Script"
+        let resolvedName = name ?? "Script"
+        DispatchQueue.main.async { self.scriptName = resolvedName }
         
         let getPidFunction: @convention(block) () -> Int = {
             return self.pid

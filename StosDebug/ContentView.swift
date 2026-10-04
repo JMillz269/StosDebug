@@ -26,45 +26,88 @@ struct ContentView: View {
             }
     
         }
-        .onOpenURL { url in
-            switch url.host {
-            case "enableJIT":
-                Task {
-                    while deviceManager.adapter == nil {
-                        try? await Task.sleep(nanoseconds: 50_000_000)
-                    }
-                    
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                
-                    let decoder = URLQueryDecoder()
-                    
-                    guard let params = try? decoder.decode(EnableJIT.self, from: url) else {
-                        print("unable to decode")
-                        return
-                    }
-                
-                    var shouldLaunchApp: Bool = false
-                    if params.pid != nil {
-                        shouldLaunchApp = params.relaunchApp ?? true
-                    }
-                    
-                    if ProcessInfo.processInfo.hasTXM {
-                        showingScript = true
-                        
-                        if let script = params.scriptData {
-                            _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp, useScript: true, script: Scripts.custom(name: params.appName.lowercased(), data: script))
-                        } else {
-                            let script = Scripts.getScriptFromName(params.appName)
-                            _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp, useScript: true, script: script)
-                        }
-                    } else {
-                        _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp)
-                    }
-                }
-            default:
-                break
+        .onAppear {
+            if ProcessInfo.processInfo.hasTXM {
+                BackgroundLocationManager.shared.requestAuthorizationIfNeeded()
             }
         }
+        .onOpenURL { url in
+    let host = url.host?.lowercased()
+
+    switch host {
+    case "enableJIT".lowercased(), "enable-jit":
+        Thread.detachNewThread {
+            while deviceManager.adapter == nil {
+                try? Thread.sleep(forTimeInterval: 0.05)
+            }
+
+            try? Thread.sleep(forTimeInterval: 0.05)
+
+            let decoder = URLQueryDecoder()
+
+            guard var params = try? decoder.decode(EnableJIT.self, from: url) else {
+                print("unable to decode")
+                return
+            }
+
+            let scheme = url.scheme?.lowercased() ?? ""
+            let isStikDebug = scheme == "stikdebug"
+            let isStosDebug = scheme == "stosdebug"
+
+            if isStosDebug, (params.appName?.isEmpty ?? true) {
+                print("unable to decode: appName is required for stosdebug:// URLs")
+                return
+            }
+
+            var shouldLaunchApp: Bool = false
+            if params.pid != nil {
+                shouldLaunchApp = params.relaunchApp ?? true
+            }
+
+            let launchApp = shouldLaunchApp
+            let bundleId = params.bundleId
+            let pid = params.pid
+            let forcePID = params.forcePID ?? false
+
+            if ProcessInfo.processInfo.hasTXM {
+                // Base64 script wins; otherwise pick by appName; otherwise Universal.
+                let script: Scripts
+                if let data = params.scriptData {
+                    let name = (params.appName?.isEmpty == false ? params.appName! : bundleId)
+                    script = Scripts.custom(name: name.lowercased(), data: data)
+                } else if let appName = params.appName, !appName.isEmpty {
+                    script = Scripts.getScriptFromName(appName)
+                } else if isStosDebug {
+                    print("unable to decode: appName is required for stosdebug:// URLs without a script")
+                    return
+                } else {
+                    script = .universal
+                }
+
+                _ = deviceManager.startDebugApp(
+                    bundleID: bundleId,
+                    pid: pid,
+                    forcePID: forcePID,
+                    launchApp: launchApp,
+                    useScript: true,
+                    script: script
+                ) { _ in
+                    DispatchQueue.main.async { showingScript = true }
+                }
+            } else {
+                _ = deviceManager.startDebugApp(
+                    bundleID: bundleId,
+                    pid: pid,
+                    forcePID: forcePID,
+                    launchApp: launchApp
+                )
+            }
+        }
+
+    default:
+        break
+    }
+}
     }
 }
 
@@ -102,7 +145,6 @@ struct AppView: View {
     @State private var mountTask: Task<Void, Never>?
     @State private var isLoadingApps: Bool = false
     
-    let locationDelegate = LocationDelegate()
     let deviceManager = DeviceManager.shared
     
     var body: some View {
@@ -172,8 +214,6 @@ struct AppView: View {
         }
         .onAppear() {
             if FileManager.default.fileExists(atPath: deviceManager.pairingFileURL.path) {
-                locationDelegate.start()
-                
                 startTunnel()
             } else {
                 FileImporterManager.shared.importFiles(types: [.item], allowMultiple: false) { result in
@@ -194,9 +234,6 @@ struct AppView: View {
                         } catch {
                             Alert.showSyncAlert(title: "Failed to copy pairing file", message: error.localizedDescription) { _ in }
                         }
-                        
-                    
-                        locationDelegate.start()
                         
                         startTunnel()
                     case .failure:
@@ -237,6 +274,8 @@ struct AppView: View {
 struct SettingsView: View {
 
     @AppStorage("forceTXM") var forceTXM = false
+    @AppStorage("keepAliveLocation") var keepAliveLocation = true
+    @AppStorage("keepAliveAudio") var keepAliveAudio = true
     @ObservedObject var deviceManager: DeviceManager
     let pairingURL = DeviceManager.shared.pairingFileURL
     
@@ -338,6 +377,29 @@ struct SettingsView: View {
             } footer: {
                 Text("\(UIDevice.modelName) | \(ProcessInfo.processInfo.hasTXM ? "TXM" : "Non-TXM") | \(deviceManager.adapter == nil ? "Tunnel not started" : "Tunnel Started") | \(deviceManager.mountStatusText)")
             }
+
+            Section {
+                Toggle("Location Keep-Alive", isOn: $keepAliveLocation)
+                    .onChange(of: keepAliveLocation) { _, isOn in
+                        if isOn {
+                            BackgroundLocationManager.shared.requestAuthorizationIfNeeded()
+                        } else {
+                            BackgroundLocationManager.shared.stop()
+                        }
+                    }
+                
+                Toggle("Background Audio Keep-Alive", isOn: $keepAliveAudio)
+                    .onChange(of: keepAliveAudio) { _, isOn in
+                        if !isOn {
+                            BackgroundAudioManager.shared.stop()
+                        }
+                    }
+            } header: {
+                Text("Keep Alive")
+            } footer: {
+                Text("Keeps StosDebug running in the background while a script is active. Location uses the background location indicator. Audio plays silence and may interrupt other audio apps' ducking. Turn both off only if you don't need background execution.")
+            }
+            
 //            Section("TXM Debug") {
 //                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
 //                Text("Force TXM: \(forceTXM)")
@@ -397,22 +459,37 @@ struct AppIcon: View {
 }
 
 struct LogsView: View {
-    @State var logs: [String] = []
-    @State var showScriptExport: Bool = false
-    @State private var logsHash: Int = 0
-    let deviceManager = DeviceManager.shared
-    @State var timer: Timer?
+    @ObservedObject private var deviceManager = DeviceManager.shared
+    
+    var body: some View {
+        if let model = deviceManager.jsViewModel {
+            LogsContent(model: model)
+                .id(ObjectIdentifier(model))
+        } else {
+            NavigationStack {
+                Text("No script running")
+                    .foregroundStyle(.secondary)
+                    .navigationTitle("Script")
+            }
+        }
+    }
+}
+
+private struct LogsContent: View {
+    @ObservedObject var model: RunJSViewModel
+    @State private var showScriptExport: Bool = false
+    
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack {
-                    ForEach(logs.indices, id: \.self) { index in
+                    ForEach(model.logs.indices, id: \.self) { index in
                         VStack {
                             HStack {
-                                Text(logs[index])
+                                Text(model.logs[index])
                                 Spacer()
                             }
-                            if index != logs.count - 1 {
+                            if index != model.logs.count - 1 {
                                 Divider()
                             }
                         }
@@ -427,27 +504,11 @@ struct LogsView: View {
                     }
                 }
             }
-            .navigationTitle(DeviceManager.shared.jsViewModel?.scriptName ?? "Missing Script ViewModel")
-            .onAppear() {
-                logs = DeviceManager.shared.jsViewModel?.logs ?? []
-                timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                    let newLogs = DeviceManager.shared.jsViewModel?.logs ?? []
-                    let newHash = newLogs.joined().hashValue
-                    if newHash != logsHash {
-                        logsHash = newHash
-                        let appended = Array(newLogs.dropFirst(logs.count))
-                        if !appended.isEmpty {
-                            logs.append(contentsOf: appended)
-                        }
-                    }
-                }
-            }
-            .onDisappear() {
-                timer?.invalidate()
-            }
-            .fileExporter(isPresented: $showScriptExport, document: TextDocument(text: logs.joined(separator: "\n"))) { _ in
-                
-            }
+            .navigationTitle(model.scriptName)
+            .fileExporter(
+                isPresented: $showScriptExport,
+                document: TextDocument(text: model.logs.joined(separator: "\n"))
+            ) { _ in }
         }
     }
 }
@@ -487,43 +548,6 @@ struct AppListRow: View {
 
         }
         .shadow(radius: 10)
-    }
-}
-
-class LocationDelegate: NSObject, CLLocationManagerDelegate {
-
-    let locationManager = CLLocationManager()
-
-    func start() {
-        guard ProcessInfo.processInfo.hasTXM else { return }
-        
-        locationManager.delegate = self
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.pausesLocationUpdatesAutomatically = false
-
-        locationManager.requestAlwaysAuthorization()
-    }
-    
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            locationManager.startUpdatingLocation()
-        case .denied, .restricted:
-            print("Location permission denied")
-        case .notDetermined:
-            print("not determined")
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // intentionally do nothing
-    }
-
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location error: \(error)")
     }
 }
 
