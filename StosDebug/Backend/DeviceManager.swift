@@ -10,6 +10,7 @@ import SwiftUI
 import Combine
 import Network
 import BackgroundTasks
+import UIKit
 
 typealias RpPairingFileHandle = OpaquePointer
 typealias IdeviceProviderHandle = OpaquePointer
@@ -183,6 +184,33 @@ final class DeviceManager: ObservableObject {
     
     
     func startDebugApp(bundleID: String? = nil, pid: Int? = nil, forcePID: Bool = false, launchApp: Bool = false, useScript: Bool = false, script: Scripts? = nil, whenJSCreated: ((RunJSViewModel) -> Void)? = nil) -> Int {
+        
+        // ---- Keep-alive for the whole session ----
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        if useScript {
+            DispatchQueue.main.sync {
+                bgTask = UIApplication.shared.beginBackgroundTask(withName: "StosDebugSession") {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+                BackgroundLocationManager.shared.start()
+                BackgroundAudioManager.shared.start()
+                print("[Session] Background task and keep-alive started")
+            }
+        }
+        defer {
+            if useScript {
+                DispatchQueue.main.async {
+                    print("[Session] Stopping keep-alive layers")
+                    BackgroundAudioManager.shared.stop()
+                    if bgTask != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTask)
+                        bgTask = .invalid
+                    }
+                }
+            }
+        }
+        // ---- end keep-alive ----
         
         guard let adapter, let handshake else {
             print("Tunnel not initialized")
