@@ -535,39 +535,50 @@ struct AppListRow: View {
 }
 
 class LocationDelegate: NSObject, CLLocationManagerDelegate {
-
-    let locationManager = CLLocationManager()
+    static let shared = LocationDelegate()
+    private let locationManager = CLLocationManager()
+    private override init() { super.init() }
 
     func start() {
-        guard ProcessInfo.processInfo.hasTXM else { return }
-        
+        print("[Loc] start() called, hasTXM=\(ProcessInfo.processInfo.hasTXM)")
+        guard ProcessInfo.processInfo.hasTXM else {
+            print("[Loc] blocked: hasTXM == false")
+            return
+        }
+
         locationManager.delegate = self
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.showsBackgroundLocationIndicator = true
+        locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
 
-        locationManager.requestAlwaysAuthorization()
-    }
-    
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
+        let status = locationManager.authorizationStatus
+        print("[Loc] auth status = \(status.rawValue), services enabled = \(CLLocationManager.locationServicesEnabled())")
+
+        switch status {
+        case .notDetermined:
+            locationManager.requestAlwaysAuthorization()
         case .authorizedAlways, .authorizedWhenInUse:
             locationManager.startUpdatingLocation()
-        case .denied, .restricted:
-            print("Location permission denied")
-        case .notDetermined:
-            print("not determined")
-            break
-        @unknown default:
-            break
+            print("[Loc] startUpdatingLocation called")
+        default:
+            print("[Loc] blocked: permission denied/restricted")
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        print("[Loc] auth changed -> \(manager.authorizationStatus.rawValue)")
+        if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
+            manager.startUpdatingLocation()
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // intentionally do nothing
+        print("[Loc] tick")
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location error: \(error)")
+        print("[Loc] error: \(error)")
     }
 }
 
