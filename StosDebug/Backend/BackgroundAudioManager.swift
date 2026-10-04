@@ -53,7 +53,7 @@ final class BackgroundAudioManager {
             try session.setActive(true)
             
             engine.attach(player)
-            let format = engine.mainMixerNode.outputFormat(forBus: 0)!
+            let format = engine.mainMixerNode.outputFormat(forBus: 0)
             engine.connect(player, to: engine.mainMixerNode, format: format)
             
             scheduleSilence(format: format)
