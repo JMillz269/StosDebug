@@ -17,6 +17,10 @@ final class BackgroundLocationManager: NSObject, CLLocationManagerDelegate {
     }
     
     func start() {
+        guard UserDefaults.standard.bool(forKey: "keepAliveLocation") else {
+            print("[BGLoc] start() skipped: toggle is off")
+            return
+        }
         print("[BGLoc] start() called")
         wantsRunning = true
         switch manager.authorizationStatus {
