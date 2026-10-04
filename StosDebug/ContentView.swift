@@ -459,22 +459,37 @@ struct AppIcon: View {
 }
 
 struct LogsView: View {
-    @State var logs: [String] = []
-    @State var showScriptExport: Bool = false
-    @State private var logsHash: Int = 0
-    let deviceManager = DeviceManager.shared
-    @State var timer: Timer?
+    @ObservedObject private var deviceManager = DeviceManager.shared
+    
+    var body: some View {
+        if let model = deviceManager.jsViewModel {
+            LogsContent(model: model)
+                .id(ObjectIdentifier(model))
+        } else {
+            NavigationStack {
+                Text("No script running")
+                    .foregroundStyle(.secondary)
+                    .navigationTitle("Script")
+            }
+        }
+    }
+}
+
+private struct LogsContent: View {
+    @ObservedObject var model: RunJSViewModel
+    @State private var showScriptExport: Bool = false
+    
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack {
-                    ForEach(logs.indices, id: \.self) { index in
+                    ForEach(model.logs.indices, id: \.self) { index in
                         VStack {
                             HStack {
-                                Text(logs[index])
+                                Text(model.logs[index])
                                 Spacer()
                             }
-                            if index != logs.count - 1 {
+                            if index != model.logs.count - 1 {
                                 Divider()
                             }
                         }
@@ -489,27 +504,11 @@ struct LogsView: View {
                     }
                 }
             }
-            .navigationTitle(DeviceManager.shared.jsViewModel?.scriptName ?? "Script")
-            .onAppear() {
-                logs = DeviceManager.shared.jsViewModel?.logs ?? []
-                timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                    let newLogs = DeviceManager.shared.jsViewModel?.logs ?? []
-                    let newHash = newLogs.joined().hashValue
-                    if newHash != logsHash {
-                        logsHash = newHash
-                        let appended = Array(newLogs.dropFirst(logs.count))
-                        if !appended.isEmpty {
-                            logs.append(contentsOf: appended)
-                        }
-                    }
-                }
-            }
-            .onDisappear() {
-                timer?.invalidate()
-            }
-            .fileExporter(isPresented: $showScriptExport, document: TextDocument(text: logs.joined(separator: "\n"))) { _ in
-                
-            }
+            .navigationTitle(model.scriptName)
+            .fileExporter(
+                isPresented: $showScriptExport,
+                document: TextDocument(text: model.logs.joined(separator: "\n"))
+            ) { _ in }
         }
     }
 }
