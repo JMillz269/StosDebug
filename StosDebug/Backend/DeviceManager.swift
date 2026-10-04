@@ -67,7 +67,7 @@ final class DeviceManager: ObservableObject {
     static let shared = DeviceManager()
     private init() {}
     
-    public var jsViewModel: RunJSViewModel?
+   @Published public var jsViewModel: RunJSViewModel?
     let fileManager = FileManager.default
     
     var pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
