@@ -1,5 +1,4 @@
 import AVFoundation
-import os.log
 
 final class BackgroundAudioManager {
     static let shared = BackgroundAudioManager()
@@ -21,12 +20,9 @@ final class BackgroundAudioManager {
     
     func start() {
         guard UserDefaults.standard.bool(forKey: "keepAliveAudio") else {
-            print("[BGAudio] start() skipped: toggle is off")
             return
         }
-        print("[BGAudio] start() called")
         guard !isRunning else {
-            print("[BGAudio] Already running")
             return
         }
         isRunning = true
@@ -37,7 +33,6 @@ final class BackgroundAudioManager {
     }
     
     func stop() {
-        print("[BGAudio] stop() called")
         isRunning = false
         timer?.invalidate()
         timer = nil
@@ -48,7 +43,6 @@ final class BackgroundAudioManager {
     
     private func startEngine() {
         do {
-            print("[BGAudio] Starting audio engine")
             engine = AVAudioEngine()
             player = AVAudioPlayerNode()
             
@@ -63,16 +57,13 @@ final class BackgroundAudioManager {
             scheduleSilence(format: format)
             try engine.start()
             player.play()
-            print("[BGAudio] Engine started successfully")
         } catch {
-            print("[BGAudio] Failed to start: \(error.localizedDescription)")
         }
     }
     
     private func scheduleSilence(format: AVAudioFormat) {
         let frameCount = AVAudioFrameCount(format.sampleRate)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            print("[BGAudio] Failed to create audio buffer")
             return
         }
         buffer.frameLength = frameCount
@@ -81,7 +72,6 @@ final class BackgroundAudioManager {
     
     private func recover() {
         guard isRunning, !engine.isRunning || !player.isPlaying else { return }
-        print("[BGAudio] Recovering audio session")
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             if !engine.isRunning {
@@ -89,7 +79,6 @@ final class BackgroundAudioManager {
             }
             player.play()
         } catch {
-            print("[BGAudio] Recovery failed: \(error.localizedDescription)")
         }
     }
 }
