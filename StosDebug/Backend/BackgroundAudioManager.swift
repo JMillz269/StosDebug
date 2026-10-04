@@ -20,6 +20,10 @@ final class BackgroundAudioManager {
     }
     
     func start() {
+        guard UserDefaults.standard.bool(forKey: "keepAliveAudio") else {
+            print("[BGAudio] start() skipped: toggle is off")
+            return
+        }
         print("[BGAudio] start() called")
         guard !isRunning else {
             print("[BGAudio] Already running")
