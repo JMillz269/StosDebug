@@ -26,45 +26,88 @@ struct ContentView: View {
             }
     
         }
+
         .onOpenURL { url in
-            switch url.host {
-            case "enableJIT":
-                Task {
-                    while deviceManager.adapter == nil {
-                        try? await Task.sleep(nanoseconds: 50_000_000)
-                    }
-                    
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                
-                    let decoder = URLQueryDecoder()
-                    
-                    guard let params = try? decoder.decode(EnableJIT.self, from: url) else {
-                        print("unable to decode")
+    let host = url.host?.lowercased()
+
+    switch host {
+    case "enableJIT".lowercased(), "enable-jit":
+        Task {
+            while deviceManager.adapter == nil {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+
+            let decoder = URLQueryDecoder()
+
+            guard var params = try? decoder.decode(EnableJIT.self, from: url) else {
+                print("unable to decode")
+                return
+            }
+
+            let scheme = url.scheme?.lowercased() ?? ""
+            let isStikDebug = scheme == "stikdebug"
+            let isStosDebug = scheme == "stosdebug"
+
+            if isStosDebug, (params.appName?.isEmpty ?? true) {
+                print("unable to decode: appName is required for stosdebug:// URLs")
+                return
+            }
+
+            var shouldLaunchApp: Bool = false
+            if params.pid != nil {
+                shouldLaunchApp = params.relaunchApp ?? true
+            }
+
+            if ProcessInfo.processInfo.hasTXM {
+                showingScript = true
+
+                if let script = params.scriptData {
+                    let scriptName = params.appName ?? params.bundleId
+                    _ = deviceManager.startDebugApp(
+                        bundleID: params.bundleId,
+                        pid: params.pid,
+                        forcePID: params.forcePID ?? false,
+                        launchApp: shouldLaunchApp,
+                        useScript: true,
+                        script: Scripts.custom(name: scriptName.lowercased(), data: script)
+                    )
+                } else {
+                    let scriptName: String
+                    if let appName = params.appName, !appName.isEmpty {
+                        scriptName = appName
+                    } else if isStikDebug {
+                        scriptName = params.bundleId
+                    } else {
+                        print("unable to decode: appName is required for stosdebug:// URLs")
                         return
                     }
-                
-                    var shouldLaunchApp: Bool = false
-                    if params.pid != nil {
-                        shouldLaunchApp = params.relaunchApp ?? true
-                    }
-                    
-                    if ProcessInfo.processInfo.hasTXM {
-                        showingScript = true
-                        
-                        if let script = params.scriptData {
-                            _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp, useScript: true, script: Scripts.custom(name: params.appName.lowercased(), data: script))
-                        } else {
-                            let script = Scripts.getScriptFromName(params.appName)
-                            _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp, useScript: true, script: script)
-                        }
-                    } else {
-                        _ = deviceManager.startDebugApp(bundleID: params.bundleId, pid: params.pid, forcePID: params.forcePID ?? false, launchApp: shouldLaunchApp)
-                    }
+
+                    let script = Scripts.getScriptFromName(scriptName)
+                    _ = deviceManager.startDebugApp(
+                        bundleID: params.bundleId,
+                        pid: params.pid,
+                        forcePID: params.forcePID ?? false,
+                        launchApp: shouldLaunchApp,
+                        useScript: true,
+                        script: script
+                    )
                 }
-            default:
-                break
+            } else {
+                _ = deviceManager.startDebugApp(
+                    bundleID: params.bundleId,
+                    pid: params.pid,
+                    forcePID: params.forcePID ?? false,
+                    launchApp: shouldLaunchApp
+                )
             }
         }
+
+    default:
+        break
+    }
+}
     }
 }
 
