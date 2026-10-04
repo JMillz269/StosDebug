@@ -303,11 +303,11 @@ final class DeviceManager: ObservableObject {
             let semaphore: dispatch_semaphore_t = DispatchSemaphore(value: 0)
             
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
-            
-            whenJSCreated?(viewModel)
-            
+
             jsViewModel = viewModel
             
+            whenJSCreated?(viewModel)
+           
             guard let scriptData = script.scriptData  else {
                 Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
                 debug_proxy_free(debugProxy)
