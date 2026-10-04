@@ -28,7 +28,6 @@ struct ContentView: View {
         }
         .onAppear {
             if ProcessInfo.processInfo.hasTXM {
-                print("[ContentView] Starting background location at app launch")
                 BackgroundLocationManager.shared.start()
             }
         }
