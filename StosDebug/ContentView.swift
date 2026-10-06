@@ -14,6 +14,7 @@ import CoreLocation
 struct ContentView: View {
     @State var showingScript: Bool = false
     @StateObject var deviceManager: DeviceManager = .shared
+    @Environment(\.scenePhase) private var scenePhase
     
     var body: some View {
         TabView {
@@ -31,15 +32,20 @@ struct ContentView: View {
                 BackgroundLocationManager.shared.requestAuthorizationIfNeeded()
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task.detached(priority: .userInitiated) {
+                    await deviceManager.ensureTunnelReady()
+                }
+            }
+        }
         .onOpenURL { url in
     let host = url.host?.lowercased()
 
     switch host {
     case "enableJIT".lowercased(), "enable-jit":
-        Thread.detachNewThread {
-            while deviceManager.adapter == nil {
-                try? Thread.sleep(forTimeInterval: 0.05)
-            }
+        Task.detached(priority: .userInitiated) {
+            await deviceManager.ensureTunnelReady()
 
             try? Thread.sleep(forTimeInterval: 0.05)
 
@@ -155,21 +161,32 @@ struct AppView: View {
                         AppListRow(app: apps[index])
                             .padding()
                             .onTapGesture {
-                                if deviceManager.isMounted != .success {
-                                    Alert.showSyncAlert(title: "DDI is not mounted", message: "Please go into settings and mount the Developer Disk Image.", actions: []) { _ in }
-                                    return
-                                }
-                                
-                                Thread.detachNewThread {
+                                Task.detached(priority: .userInitiated) {
+                                    await deviceManager.ensureTunnelReady()
+
+                                    await MainActor.run {
+                                        if deviceManager.isMounted != .success {
+                                            Alert.showSyncAlert(
+                                                title: "DDI is not mounted",
+                                                message: "Please go into settings and mount the Developer Disk Image.",
+                                                actions: []
+                                            ) { _ in }
+                                            return
+                                        }
+                                    }
+
                                     if ProcessInfo.processInfo.hasTXM {
                                         let script = Scripts.getScriptFromName(apps[index].name)
-                                        
-                                        _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier, useScript: true, script: script) { viewModel in
+
+                                        _ = deviceManager.startDebugApp(
+                                            bundleID: apps[index].bundleIdentifier,
+                                            useScript: true,
+                                            script: script
+                                        ) { _ in
                                             DispatchQueue.main.async {
                                                 showingScript = true
                                             }
                                         }
-                                        
                                     } else {
                                         _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier)
                                     }
@@ -248,7 +265,7 @@ struct AppView: View {
         isLoadingApps = true
         Task.detached(priority: .userInitiated) {
             do {
-                try await deviceManager.setupTunnel()
+                try await deviceManager.ensureTunnelReady()
                 await deviceManager.runCheckMounted(mountIfNeeded: true)
                 let result = try? await DeviceManager.shared.listApps()
                 await MainActor.run {
@@ -303,7 +320,7 @@ struct SettingsView: View {
                             
                             Task.detached(priority: .userInitiated) {
                                 do {
-                                    try await deviceManager.setupTunnel()
+                                    await deviceManager.ensureTunnelReady()
                                 } catch {
                                     _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
                                 }
@@ -318,7 +335,7 @@ struct SettingsView: View {
                 Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
                     Task.detached(priority: .userInitiated) {
                         do {
-                            try await deviceManager.setupTunnel()
+                            await deviceManager.ensureTunnelReady()
                         } catch {
                             _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
                         }
