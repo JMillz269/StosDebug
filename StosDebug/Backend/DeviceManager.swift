@@ -78,6 +78,9 @@ final class DeviceManager: ObservableObject {
     var adapter: AdapterHandle?
     var handshake: RsdHandshakeHandle?
     var pairing: RpPairingFileHandle?
+
+    private var tunnelHealthTask: Task<Bool, Never>?
+    private var tunnelRebuildTask: Task<Void, Never>?
     
     @Published var checkMounted: Task<Void, Never>? = nil
     @Published var isMounted: DeviceError = .none
@@ -181,7 +184,86 @@ final class DeviceManager: ObservableObject {
             }
         }.value
     }
-    
+
+    private func clearTunnelHandles() {
+        adapter = nil
+        handshake = nil
+        pairing = nil
+    }
+
+    func ensureTunnelReady() async {
+        if let task = tunnelRebuildTask {
+            await task.value
+            return
+        }
+
+        if adapter == nil || handshake == nil {
+            let task = Task {
+                do {
+                    try await setupTunnel()
+                    await runCheckMounted(mountIfNeeded: false)
+                } catch {
+                    await MainActor.run {
+                        self.isMounted = .failure(issue: error.localizedDescription)
+                    }
+                }
+            }
+
+            tunnelRebuildTask = task
+            await task.value
+            tunnelRebuildTask = nil
+            return
+        }
+
+        let healthy = await tunnelHealthCheck(timeout: 2.0)
+        if healthy {
+            return
+        }
+
+        let task = Task {
+            await MainActor.run {
+                self.clearTunnelHandles()
+            }
+
+            do {
+                try await setupTunnel()
+                await runCheckMounted(mountIfNeeded: false)
+            } catch {
+                await MainActor.run {
+                    self.isMounted = .failure(issue: error.localizedDescription)
+                }
+            }
+        }
+
+        tunnelRebuildTask = task
+        await task.value
+        tunnelRebuildTask = nil
+    }
+
+    private func tunnelHealthCheck(timeout: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var finished = false
+
+            func finish(_ value: Bool) {
+                lock.lock()
+                defer { lock.unlock() }
+
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: value)
+            }
+
+            Task.detached(priority: .userInitiated) {
+                let ok = (try? await self.isMounted()) != nil
+                finish(ok)
+            }
+
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                finish(false)
+            }
+        }
+    }
     
     func startDebugApp(bundleID: String? = nil, pid: Int? = nil, forcePID: Bool = false, launchApp: Bool = false, useScript: Bool = false, script: Scripts? = nil, whenJSCreated: ((RunJSViewModel) -> Void)? = nil) -> Int {
         
