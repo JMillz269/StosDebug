@@ -140,6 +140,10 @@ final class DeviceManager: ObservableObject {
         if let err {
             throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
         }
+
+        var newPairing: RpPairingFileHandle?
+            let err = rp_pairing_file_read(pairingFileURL.path, &newPairing)
+        pairing = newPairing
         
         var addr = sockaddr_in()
         memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
@@ -191,53 +195,35 @@ final class DeviceManager: ObservableObject {
         pairing = nil
     }
 
+    @MainActor
     func ensureTunnelReady() async {
+        // Join an in-flight check/rebuild instead of starting another
         if let task = tunnelRebuildTask {
             await task.value
             return
         }
 
-        if adapter == nil || handshake == nil {
-            let task = Task {
-                do {
-                    try await setupTunnel()
-                    await runCheckMounted(mountIfNeeded: false)
-                } catch {
-                    await MainActor.run {
-                        self.isMounted = .failure(issue: error.localizedDescription)
-                    }
-                }
+        let task = Task { @MainActor in
+            defer { self.tunnelRebuildTask = nil }
+
+            let needsRebuild: Bool
+            if self.adapter == nil || self.handshake == nil {
+                needsRebuild = true
+            } else {
+                needsRebuild = !(await self.tunnelHealthCheck(timeout: 3.0))
             }
+            guard needsRebuild else { return }
 
-            tunnelRebuildTask = task
-            await task.value
-            tunnelRebuildTask = nil
-            return
-        }
-
-        let healthy = await tunnelHealthCheck(timeout: 2.0)
-        if healthy {
-            return
-        }
-
-        let task = Task {
-            await MainActor.run {
-                self.clearTunnelHandles()
-            }
-
+            self.clearTunnelHandles()
             do {
-                try await setupTunnel()
-                await runCheckMounted(mountIfNeeded: false)
+                try await self.setupTunnel()
+                self.runCheckMounted(mountIfNeeded: false)
             } catch {
-                await MainActor.run {
-                    self.isMounted = .failure(issue: error.localizedDescription)
-                }
+                self.isMounted = .failure(issue: error.localizedDescription)
             }
         }
-
         tunnelRebuildTask = task
         await task.value
-        tunnelRebuildTask = nil
     }
 
     private func tunnelHealthCheck(timeout: TimeInterval) async -> Bool {
