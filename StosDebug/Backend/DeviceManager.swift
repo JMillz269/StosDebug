@@ -133,7 +133,9 @@ final class DeviceManager: ObservableObject {
         let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
         
         idevice_init_logger(Debug, Debug, string)
-        let err = rp_pairing_file_read(pairingFileURL.path, &pairing)
+
+        var newPairing: RpPairingFileHandle?
+        let err = rp_pairing_file_read(pairingFileURL.path, &newPairing)
         
         free(string)
         
@@ -141,8 +143,6 @@ final class DeviceManager: ObservableObject {
             throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
         }
 
-        var newPairing: RpPairingFileHandle?
-            let err = rp_pairing_file_read(pairingFileURL.path, &newPairing)
         pairing = newPairing
         
         var addr = sockaddr_in()
