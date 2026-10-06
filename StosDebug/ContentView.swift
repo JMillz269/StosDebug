@@ -225,30 +225,29 @@ struct AppView: View {
             if FileManager.default.fileExists(atPath: deviceManager.pairingFileURL.path) {
                 startTunnel()
             } else {
-                FileImporterManager.shared.importFiles(types: [.item], allowMultiple: false) { result in
-                    switch result {
-                    case .success(let urls):
-                        let url = urls.first!
-                        let securityScoped = url.startAccessingSecurityScopedResource()
-                        defer { if securityScoped {  url.stopAccessingSecurityScopedResource() }}
-                        
-                        let pairingURL = deviceManager.pairingFileURL
-                        
-                        if FileManager.default.fileExists(atPath: pairingURL.path) {
-                            try? FileManager.default.removeItem(at: pairingURL)
-                        }
-                        
-                        do {
-                            try FileManager.default.copyItem(at: url, to: pairingURL)
-                        } catch {
-                            Alert.showSyncAlert(title: "Failed to copy pairing file", message: error.localizedDescription) { _ in }
-                        }
-                        
-                        startTunnel()
-                    case .failure:
-                        break
-                    }
-                }
+FileImporterManager.shared.importFiles(types: [.item], allowMultiple: false) { result in
+    switch result {
+    case .success(let urls):
+        let url = urls.first!
+        let securityScoped = url.startAccessingSecurityScopedResource()
+        defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
+
+        if FileManager.default.fileExists(atPath: pairingURL.path) {
+            try? FileManager.default.removeItem(at: pairingURL)
+        }
+
+        do {
+            try FileManager.default.copyItem(at: url, to: pairingURL)
+        } catch {
+            Alert.showSyncAlert(title: "Failed to copy pairing file", message: error.localizedDescription) { _ in }
+        }
+
+        startTunnel()
+
+    case .failure:
+        break
+    }
+}
             }
         }
     }
