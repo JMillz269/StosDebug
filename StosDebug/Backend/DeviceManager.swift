@@ -66,15 +66,15 @@ private var usesCryptexDDI: Bool {
 final class DeviceManager: ObservableObject {
     static let shared = DeviceManager()
     private init() {}
-    
-   @Published public var jsViewModel: RunJSViewModel?
+
+    @Published public var jsViewModel: RunJSViewModel?
     let fileManager = FileManager.default
-    
+
     var pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
-    
+
     let pairingFileURL1 = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     let pairingFileURL2 = URL.documentsDirectory.appendingPathComponent("ios_pairing_file.plist")
-    
+
     var adapter: AdapterHandle?
     var handshake: RsdHandshakeHandle?
     var pairing: RpPairingFileHandle?
@@ -95,86 +95,84 @@ final class DeviceManager: ObservableObject {
     private func endDebugSession() {
         sessionLock.withLock { activeSessionCount = max(0, activeSessionCount - 1) }
     }
-    
+
     @Published var checkMounted: Task<Void, Never>? = nil
     @Published var isMounted: DeviceError = .none
-    
+
     @Published var mountTask: Task<Void, Never>? = nil
     @Published var isMounting: DeviceError = .none
-    
+
     func runMountDDI(_ check: Bool = false) {
-    if check && isMounting == .success {
-        return
-    }
-
-    mountTask?.cancel()
-
-    mountTask = Task {
-        await MainActor.run {
-            isMounting = .loading
+        if check && isMounting == .success {
+            return
         }
 
-        do {
-            if usesCryptexDDI {
-                try await mountCryptexDDI()
-            } else {
-                try await mountPersonalDDI(
-                    imagePath: DeveloperDiskImage.personalizedImage.rawValue,
-                    trustcachePath: DeveloperDiskImage.personalizedTrustCache.rawValue,
-                    manifestPath: DeveloperDiskImage.personalizedBuildManifest.rawValue
-                )
+        mountTask?.cancel()
+
+        mountTask = Task {
+            await MainActor.run {
+                isMounting = .loading
             }
 
-            await MainActor.run {
-                isMounting = .success
-            }
+            do {
+                if usesCryptexDDI {
+                    try await mountCryptexDDI()
+                } else {
+                    try await mountPersonalDDI(
+                        imagePath: DeveloperDiskImage.personalizedImage.rawValue,
+                        trustcachePath: DeveloperDiskImage.personalizedTrustCache.rawValue,
+                        manifestPath: DeveloperDiskImage.personalizedBuildManifest.rawValue
+                    )
+                }
 
-            runCheckMounted()
-        } catch {
-            await MainActor.run {
-                isMounting = .failure(issue: error.localizedDescription)
+                await MainActor.run {
+                    isMounting = .success
+                }
+
+                runCheckMounted()
+            } catch {
+                await MainActor.run {
+                    isMounting = .failure(issue: error.localizedDescription)
+                }
             }
         }
     }
-}
 
-    
-    
-    func setupTunnel() async throws  {
+    func setupTunnel() async throws {
         if !fileManager.fileExists(atPath: pairingFileURL1.path) && fileManager.fileExists(atPath: pairingFileURL2.path) {
             pairingFileURL = pairingFileURL2
         }
+
         let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
-        
         idevice_init_logger(Debug, Debug, string)
 
         var newPairing: RpPairingFileHandle?
         let err = rp_pairing_file_read(pairingFileURL.path, &newPairing)
-        
+
         free(string)
-        
+
         if let err {
             throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
         }
 
         pairing = newPairing
-        
+
         var addr = sockaddr_in()
         memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
-        
+
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = CFSwapInt16HostToBig(49152)
-        
+
         guard inet_pton(AF_INET, "10.7.0.1", &addr.sin_addr) == 1 else {
             throw "Invalid IP (shouldn't be possible)"
         }
-        
+
         let pairing = pairing
-        
+
         try await Task.detached {
             var newAdapter: AdapterHandle?
             var newHandshake: RsdHandshakeHandle?
-            
+
             let result = withUnsafePointer(to: &addr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { ptr in
                     tunnel_create_rppairing(
@@ -189,11 +187,11 @@ final class DeviceManager: ObservableObject {
                     )
                 }
             }
-            
+
             if let result {
-                throw "Tunnel creation failed: \(result.pointee.code) \(await result.pointee.message.string)"
+                throw "Tunnel creation failed: \(result.pointee.code) \(result.pointee.message.string)"
             }
-            
+
             let adapter = newAdapter
             let handshake = newHandshake
             await MainActor.run {
@@ -211,9 +209,8 @@ final class DeviceManager: ObservableObject {
 
     @MainActor
     func ensureTunnelReady() async {
-        // Never probe or rebuild while a debug session is using the tunnel
         if isDebugSessionActive { return }
-        // Join an in-flight check/rebuild instead of starting another
+
         if let task = tunnelRebuildTask {
             await task.value
             return
@@ -228,9 +225,11 @@ final class DeviceManager: ObservableObject {
             } else {
                 needsRebuild = !(await self.tunnelHealthCheck(timeout: 3.0))
             }
+
             guard needsRebuild else { return }
 
             self.clearTunnelHandles()
+
             do {
                 try await self.setupTunnel()
                 self.runCheckMounted(mountIfNeeded: false)
@@ -238,6 +237,7 @@ final class DeviceManager: ObservableObject {
                 self.isMounted = .failure(issue: error.localizedDescription)
             }
         }
+
         tunnelRebuildTask = task
         await task.value
     }
@@ -266,11 +266,20 @@ final class DeviceManager: ObservableObject {
             }
         }
     }
-    
-    func startDebugApp(bundleID: String? = nil, pid: Int? = nil, forcePID: Bool = false, launchApp: Bool = false, useScript: Bool = false, script: Scripts? = nil, whenJSCreated: ((RunJSViewModel) -> Void)? = nil) -> Int {
-                beginDebugSession()
+
+    func startDebugApp(
+        bundleID: String? = nil,
+        pid: Int? = nil,
+        forcePID: Bool = false,
+        launchApp: Bool = false,
+        useScript: Bool = false,
+        script: Scripts? = nil,
+        whenJSCreated: ((RunJSViewModel) -> Void)? = nil
+    ) -> Int {
+
+        beginDebugSession()
         defer { endDebugSession() }
-        
+
         // ---- Keep-alive for the whole session ----
         var bgTask: UIBackgroundTaskIdentifier = .invalid
         if useScript {
@@ -297,37 +306,37 @@ final class DeviceManager: ObservableObject {
             }
         }
         // ---- end keep-alive ----
-        
+
         guard let adapter, let handshake else {
             print("Tunnel not initialized")
             return 1
         }
-        
+
         var err: UnsafeMutablePointer<IdeviceFfiError>?
-        
+
         var remoteServer: RemoteServerHandle?
         err = remote_server_connect_rsd(adapter, handshake, &remoteServer)
-        
+
         if let err {
             print("Remote server failed: \(err.pointee.message.string)")
             return 1
         }
-        
+
         var debugProxy: DebugProxyHandle?
         err = debug_proxy_connect_rsd(adapter, handshake, &debugProxy)
-        
+
         if let err {
             print("Debug proxy failed: \(err.pointee.message.string)")
             return 1
         }
-        
+
         var finalPID = UInt64(pid ?? 0)
-        
+
         if let bundleID, let pid, launchApp {
             var backPid: UInt64 = 0
             var processControl: ProcessControlHandle?
             err = process_control_new(remoteServer, &processControl)
-            
+
             if err == nil {
                 err = process_control_launch_app(
                     processControl,
@@ -340,19 +349,19 @@ final class DeviceManager: ObservableObject {
                     false,
                     &backPid
                 )
-                
+
                 _ = process_control_disable_memory_limit(processControl, finalPID)
                 process_control_free(processControl)
             }
-            
+
             if backPid != pid && finalPID != 0 && !forcePID {
                 finalPID = backPid
             }
-            
+
         } else if let bundleID {
             var processControl: ProcessControlHandle?
             err = process_control_new(remoteServer, &processControl)
-            
+
             if err == nil {
                 err = process_control_launch_app(
                     processControl,
@@ -365,29 +374,28 @@ final class DeviceManager: ObservableObject {
                     false,
                     &finalPID
                 )
-                
+
                 _ = process_control_disable_memory_limit(processControl, finalPID)
                 process_control_free(processControl)
             }
         }
-        
+
         if finalPID == 0 {
             return 2
         }
-        
+
         debug_proxy_send_ack(debugProxy)
         debug_proxy_send_ack(debugProxy)
-        
+
         var disableResponse: UnsafeMutablePointer<CChar>?
-        let disableAckCommand = debugserver_command_new("QStartNoAckMode", nil, 0);
+        let disableAckCommand = debugserver_command_new("QStartNoAckMode", nil, 0)
         debug_proxy_send_command(debugProxy, disableAckCommand, &disableResponse)
         debugserver_command_free(disableAckCommand)
-        debug_proxy_set_ack_mode(debugProxy, 0);
-        
-        
+        debug_proxy_set_ack_mode(debugProxy, 0)
+
         if useScript, let script {
             let semaphore: dispatch_semaphore_t = DispatchSemaphore(value: 0)
-            
+
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
             if Thread.isMainThread {
@@ -395,42 +403,42 @@ final class DeviceManager: ObservableObject {
             } else {
                 DispatchQueue.main.sync { self.jsViewModel = viewModel }
             }
-            
+
             whenJSCreated?(viewModel)
-           
-            guard let scriptData = script.scriptData  else {
+
+            guard let scriptData = script.scriptData else {
                 Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
                 debug_proxy_free(debugProxy)
                 return 3
             }
-            
+
             if jsViewModel?.runScript(data: scriptData, name: script.scriptName) != nil {
                 semaphore.wait()
                 let _ = debug_proxy_send_raw(debugProxy, "\\x03", 1)
-                
+
                 if !script.persistent {
                     if let (key, _) = Scripts.customScript.first(where: { $0.value == script }) {
                         Scripts.customScript.removeValue(forKey: key)
                     }
                 }
-                
-                usleep(500);
-                
+
+                usleep(500)
+
                 debug_proxy_free(debugProxy)
             }
         } else {
             let attachStr = String(format: "vAttach;%llx", finalPID)
             let attachCmd = debugserver_command_new(attachStr, nil, 0)
-            
+
             var response: UnsafeMutablePointer<CChar>?
             _ = debug_proxy_send_command(debugProxy, attachCmd, &response)
-            
+
             if response != nil {
                 idevice_string_free(response)
             }
-            
+
             debugserver_command_free(attachCmd)
-            
+
             if let detachCmd = debugserver_command_new("D", nil, 0) {
                 var detachResp: UnsafeMutablePointer<CChar>?
                 for _ in 0..<3 {
@@ -442,12 +450,10 @@ final class DeviceManager: ObservableObject {
                 debugserver_command_free(detachCmd)
             }
         }
-        
-        
-        
+
         return 0
     }
-    
+
     func listApps(gettaskallow: Bool = true) throws -> [SideApp] {
         var client: InstallationProxyClientHandle? = nil
 
@@ -479,23 +485,23 @@ final class DeviceManager: ObservableObject {
                 }
             }
         }
-        
+
         var sideApps: [SideApp] = []
-        
+
         for i in 0..<resultCount {
             guard let app = appsArray[i] else { continue }
-            
+
             if gettaskallow {
                 guard
                     let entitlements = plist_dict_get_item(app, "Entitlements"),
                     let getTaskNode = plist_dict_get_item(entitlements, "get-task-allow")
                 else { continue }
-                
+
                 var isAllowed: UInt8 = 0
                 plist_get_bool_val(getTaskNode, &isAllowed)
                 if isAllowed == 0 { continue }
             }
-            
+
             guard let bidNode = plist_dict_get_item(app, "CFBundleIdentifier") else { continue }
             var bidC: UnsafeMutablePointer<CChar>? = nil
             plist_get_string_val(bidNode, &bidC)
@@ -505,7 +511,7 @@ final class DeviceManager: ObservableObject {
             }
             let bundleID = String(cString: bidCString)
             free(bidC)
-            
+
             var appName = "Unknown"
             if let nameNode = plist_dict_get_item(app, "CFBundleName") {
                 var nameC: UnsafeMutablePointer<CChar>? = nil
@@ -515,284 +521,282 @@ final class DeviceManager: ObservableObject {
                 }
                 free(nameC)
             }
-            
+
             let sideApp = SideApp(name: appName, bundleIdentifier: bundleID)
             sideApps.append(sideApp)
         }
-        
+
         return sideApps
     }
-    
-    
+
     func getAppIcon(bundleID: String) async -> Data? {
         let adapter = adapter
         let handshake = handshake
-        
+
         return await Task.detached(priority: .userInitiated) {
             var client: SpringBoardServicesClientHandle?
-            
+
             if springboard_services_connect_rsd(adapter, handshake, &client) != nil {
                 return nil
             }
-            
+
             var iconData: UnsafeMutableRawPointer?
             var iconDataLen: Int = 0
-            
+
             if springboard_services_get_icon(client, bundleID, &iconData, &iconDataLen) != nil {
                 springboard_services_free(client)
                 return nil
             }
-            
+
             springboard_services_free(client)
-            
+
             return Data(bytes: iconData!, count: iconDataLen)
         }.value
     }
+
     func isMounted() async throws -> Bool {
-    guard let adapter, let handshake else {
-        throw "Tunnel not initialized"
-    }
-
-    var cryptex: UnsafeMutablePointer<InstalledCryptexC>?
-    let cryptexError = cryptexd_installed_ddi(
-        adapter,
-        handshake,
-        &cryptex
-    )
-
-    defer {
-        cryptexd_free_installed_cryptex(cryptex)
-    }
-
-    if cryptex != nil {
-        return true
-    }
-
-    var mounterClient: MounterClientHandle?
-    let mounterError = image_mounter_connect_rsd(
-        adapter,
-        handshake,
-        &mounterClient
-    )
-
-    if let mounterError {
-        if let cryptexError {
-            throw cryptexError.pointee.message.string
+        guard let adapter, let handshake else {
+            throw "Tunnel not initialized"
         }
 
-        throw mounterError.pointee.message.string
-    }
+        var cryptex: UnsafeMutablePointer<InstalledCryptexC>?
+        let cryptexError = cryptexd_installed_ddi(
+            adapter,
+            handshake,
+            &cryptex
+        )
 
-    defer {
-        image_mounter_free(mounterClient)
-    }
+        defer {
+            cryptexd_free_installed_cryptex(cryptex)
+        }
 
-    var devices: UnsafeMutablePointer<plist_t?>?
-    var deviceCount: size_t = 0
+        if cryptex != nil {
+            return true
+        }
 
-    if let error = image_mounter_copy_devices(
-        mounterClient,
-        &devices,
-        &deviceCount
-    ) {
-        throw error.pointee.message.string
-    }
+        var mounterClient: MounterClientHandle?
+        let mounterError = image_mounter_connect_rsd(
+            adapter,
+            handshake,
+            &mounterClient
+        )
 
-    if let devices {
-        for index in 0..<Int(deviceCount) {
-            if let device = devices[index] {
-                plist_free(device)
+        if let mounterError {
+            if let cryptexError {
+                throw cryptexError.pointee.message.string
             }
+
+            throw mounterError.pointee.message.string
         }
 
-        idevice_data_free(
-            UnsafeMutableRawPointer(devices)
-                .assumingMemoryBound(to: UInt8.self),
-            UInt(deviceCount * MemoryLayout<plist_t?>.stride)
-        )
-    }
-
-    return deviceCount > 0
-}
-
-private func mountCryptexDDI() async throws {
-    guard let adapter, let handshake else {
-        throw "Tunnel not initialized"
-    }
-
-    let fileManager = FileManager.default
-    let ddiDirectory = URL.documentsDirectory
-        .appendingPathComponent("DDI", isDirectory: true)
-
-    try fileManager.createDirectory(
-        at: ddiDirectory,
-        withIntermediateDirectories: true
-    )
-
-    let files: [(name: String, url: String)] = [
-        (
-            "BuildManifest.plist",
-            DeveloperDiskImage.cryptexBuildManifest.rawValue
-        ),
-        (
-            "Image.dmg",
-            DeveloperDiskImage.cryptexImage.rawValue
-        ),
-        (
-            "Image.dmg.trustcache",
-            DeveloperDiskImage.cryptexTrustCache.rawValue
-        ),
-        (
-            "Image.dmg.cryptex_info",
-            DeveloperDiskImage.cryptexInfo.rawValue
-        ),
-        (
-            "Image.dmg.root_hash",
-            DeveloperDiskImage.cryptexRootHash.rawValue
-        )
-    ]
-
-    for file in files {
-        let destination = ddiDirectory
-            .appendingPathComponent(file.name)
-
-        if fileManager.fileExists(atPath: destination.path) {
-            continue
+        defer {
+            image_mounter_free(mounterClient)
         }
 
-        let data = try await downloadDataAsync(from: file.url)
-        try data.write(to: destination, options: .atomic)
+        var devices: UnsafeMutablePointer<plist_t?>?
+        var deviceCount: size_t = 0
+
+        if let error = image_mounter_copy_devices(
+            mounterClient,
+            &devices,
+            &deviceCount
+        ) {
+            throw error.pointee.message.string
+        }
+
+        if let devices {
+            for index in 0..<Int(deviceCount) {
+                if let device = devices[index] {
+                    plist_free(device)
+                }
+            }
+
+            idevice_data_free(
+                UnsafeMutableRawPointer(devices)
+                    .assumingMemoryBound(to: UInt8.self),
+                UInt(deviceCount * MemoryLayout<plist_t?>.stride)
+            )
+        }
+
+        return deviceCount > 0
     }
 
-    var assets: OpaquePointer?
+    private func mountCryptexDDI() async throws {
+        guard let adapter, let handshake else {
+            throw "Tunnel not initialized"
+        }
 
-    let loadError = ddiDirectory.path.withCString { path in
-        cryptex1_assets_load(path, &assets)
+        let fileManager = FileManager.default
+        let ddiDirectory = URL.documentsDirectory
+            .appendingPathComponent("DDI", isDirectory: true)
+
+        try fileManager.createDirectory(
+            at: ddiDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let files: [(name: String, url: String)] = [
+            (
+                "BuildManifest.plist",
+                DeveloperDiskImage.cryptexBuildManifest.rawValue
+            ),
+            (
+                "Image.dmg",
+                DeveloperDiskImage.cryptexImage.rawValue
+            ),
+            (
+                "Image.dmg.trustcache",
+                DeveloperDiskImage.cryptexTrustCache.rawValue
+            ),
+            (
+                "Image.dmg.cryptex_info",
+                DeveloperDiskImage.cryptexInfo.rawValue
+            ),
+            (
+                "Image.dmg.root_hash",
+                DeveloperDiskImage.cryptexRootHash.rawValue
+            )
+        ]
+
+        for file in files {
+            let destination = ddiDirectory
+                .appendingPathComponent(file.name)
+
+            if fileManager.fileExists(atPath: destination.path) {
+                continue
+            }
+
+            let data = try await downloadDataAsync(from: file.url)
+            try data.write(to: destination, options: .atomic)
+        }
+
+        var assets: OpaquePointer?
+
+        let loadError = ddiDirectory.path.withCString { path in
+            cryptex1_assets_load(path, &assets)
+        }
+
+        if let loadError {
+            throw loadError.pointee.message.string
+        }
+
+        guard let assets else {
+            throw "Cryptex DDI assets could not be loaded"
+        }
+
+        defer {
+            cryptex1_assets_free(assets)
+        }
+
+        let installError = cryptexd_install_ddi(
+            adapter,
+            handshake,
+            assets,
+            nil
+        )
+
+        if let installError {
+            throw installError.pointee.message.string
+        }
     }
 
-    if let loadError {
-        throw loadError.pointee.message.string
-    }
-
-    guard let assets else {
-        throw "Cryptex DDI assets could not be loaded"
-    }
-
-    defer {
-        cryptex1_assets_free(assets)
-    }
-
-    let installError = cryptexd_install_ddi(
-        adapter,
-        handshake,
-        assets,
-        nil
-    )
-
-    if let installError {
-        throw installError.pointee.message.string
-    }
-}
-    
     func downloadDataAsync(from urlString: String) async throws -> Data {
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "InvalidURL", code: 0)
         }
-        
+
         var request = URLRequest(url: url)
         request.cachePolicy = .useProtocolCachePolicy
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         if let http = response as? HTTPURLResponse {
             print("Status:", http.statusCode)
         }
-        
+
         return data
     }
 
-func runUnmountDDI() {
-    Task {
-        do {
-            try await unmountDDI()
+    func runUnmountDDI() {
+        Task {
+            do {
+                try await unmountDDI()
 
-            await MainActor.run {
-                self.isMounted = .notMounted
-                self.isMounting = .none
-            }
-        } catch {
-            await MainActor.run {
-                self.isMounted = .failure(issue: error.localizedDescription)
+                await MainActor.run {
+                    self.isMounted = .notMounted
+                    self.isMounting = .none
+                }
+            } catch {
+                await MainActor.run {
+                    self.isMounted = .failure(issue: error.localizedDescription)
+                }
             }
         }
     }
-}
 
-private func unmountDDI() async throws {
-    guard let adapter, let handshake else {
-        throw "Tunnel not initialized"
+    private func unmountDDI() async throws {
+        guard let adapter, let handshake else {
+            throw "Tunnel not initialized"
+        }
+
+        var installed: UnsafeMutablePointer<InstalledCryptexC>?
+
+        let installedError = cryptexd_installed_ddi(
+            adapter,
+            handshake,
+            &installed
+        )
+
+        if let installedError {
+            throw installedError.pointee.message.string
+        }
+
+        guard let installed else {
+            throw "No Cryptex DDI is currently installed"
+        }
+
+        defer {
+            cryptexd_free_installed_cryptex(installed)
+        }
+
+        guard let identifierPtr = installed.pointee.identifier else {
+            throw "Unable to determine installed Cryptex identifier"
+        }
+
+        let identifier = String(cString: identifierPtr)
+
+        var cryptexHandle: CryptexdHandle?
+
+        let connectError = cryptexd_connect_rsd(
+            adapter,
+            handshake,
+            &cryptexHandle
+        )
+
+        if let connectError {
+            throw connectError.pointee.message.string
+        }
+
+        guard let cryptexHandle else {
+            throw "Failed to create Cryptexd handle"
+        }
+
+        let identifierCString = strdup(identifier)
+        defer {
+            free(identifierCString)
+        }
+
+        let uninstallError = cryptexd_uninstall(
+            cryptexHandle,
+            identifierCString,
+            nil
+        )
+
+        if let uninstallError {
+            throw uninstallError.pointee.message.string
+        }
     }
 
-    // Get installed DDI information
-    var installed: UnsafeMutablePointer<InstalledCryptexC>?
-
-    let installedError = cryptexd_installed_ddi(
-        adapter,
-        handshake,
-        &installed
-    )
-
-    if let installedError {
-        throw installedError.pointee.message.string
-    }
-
-    guard let installed else {
-        throw "No Cryptex DDI is currently installed"
-    }
-
-    defer {
-        cryptexd_free_installed_cryptex(installed)
-    }
-
-    guard let identifierPtr = installed.pointee.identifier else {
-        throw "Unable to determine installed Cryptex identifier"
-    }
-
-    let identifier = String(cString: identifierPtr)
-
-    // Create a new Cryptexd connection
-    var cryptexHandle: CryptexdHandle?
-
-    let connectError = cryptexd_connect_rsd(
-        adapter,
-        handshake,
-        &cryptexHandle
-    )
-
-    if let connectError {
-        throw connectError.pointee.message.string
-    }
-
-    guard let cryptexHandle else {
-        throw "Failed to create Cryptexd handle"
-    }
-
-    let identifierCString = strdup(identifier)
-    defer {
-        free(identifierCString)
-    }
-
-    let uninstallError = cryptexd_uninstall(
-        cryptexHandle,
-        identifierCString,
-        nil
-    )
-
-    if let uninstallError {
-        throw uninstallError.pointee.message.string
-    }
-}    
-    
     func runCheckMounted(mountIfNeeded: Bool = false) {
         checkMounted?.cancel()
         checkMounted = Task {
@@ -804,7 +808,7 @@ private func unmountDDI() async throws {
                 await MainActor.run {
                     isMounted = mounted ? .success : .notMounted
                 }
-                
+
                 if mountIfNeeded && !mounted {
                     runMountDDI()
                 }
@@ -815,7 +819,7 @@ private func unmountDDI() async throws {
             }
         }
     }
-    
+
     func mountPersonalDDI(
         imagePath: String,
         trustcachePath: String,
@@ -824,35 +828,33 @@ private func unmountDDI() async throws {
         let image = try await downloadDataAsync(from: imagePath)
         let trustcache = try await downloadDataAsync(from: trustcachePath)
         let buildManifest = try await downloadDataAsync(from: manifestPath)
-        
+
         var lockdownClient: LockdowndClientHandle?
         var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
         if let err {
             throw err.pointee.message.string
         }
-        
+
         var uniqueChipIdPlist: plist_t?
         err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
         if let err {
             throw err.pointee.message.string
         }
-        
-        
+
         var uniqueChipId: UInt64 = 0
         plist_get_uint_val(uniqueChipIdPlist, &uniqueChipId)
-        
-        
+
         var mounterClient: MounterClientHandle?
         err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
         if let err {
             throw err.pointee.message.string
         }
-        
+
         defer {
             image_mounter_free(mounterClient)
             lockdownd_client_free(lockdownClient)
         }
-        
+
         let adapter = adapter
         let handshake = handshake
         try await Task.detached {
@@ -868,17 +870,13 @@ private func unmountDDI() async throws {
                     unsafePointer[2].uint8Pointer,
                     buildManifest.count,
                     nil, uniqueChipId)
-                
             }
         }.value
-        
+
         if let err {
             throw err.pointee.message.string
         }
     }
-    
-    
-
 }
 
 func withUnsafeBytes<R>(
@@ -892,18 +890,17 @@ func withUnsafeBytes<R>(
     return try open(buffers[...], [])
 }
 
-
 struct SideApp: Codable, Identifiable, Equatable {
     var id: String { bundleIdentifier }
     var name: String
     var bundleIdentifier: String
     var version: String?
     var appIcon: Data?
-    var path: String? // .app path, not ipa
+    var path: String?
     var isSideStore: Bool {
         bundleIdentifier == Bundle.main.bundleIdentifier ?? "io.sidestore.SideStore.next"
     }
-    
+
     init(name: String, bundleIdentifier: String, version: String? = nil, appIcon: Data? = nil, path: String? = nil) {
         self.name = name
         self.bundleIdentifier = bundleIdentifier
@@ -911,23 +908,23 @@ struct SideApp: Codable, Identifiable, Equatable {
         self.appIcon = appIcon
         self.path = path
     }
-    
-    
-    
 }
 
-
-// extension String: @retroactive Error {}
-extension String: LocalizedError {
+extension String: @retroactive LocalizedError {
     public var errorDescription: String? { self }
 }
 
-extension OpaquePointer: @retroactive @unchecked Sendable {
-    
-}
-
+extension OpaquePointer: @retroactive @unchecked Sendable { }
 
 // MARK: - Helpers
+
+extension NSLock {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try body()
+    }
+}
 
 extension UnsafeRawBufferPointer {
     var uint8Pointer: UnsafePointer<UInt8> { baseAddress!.assumingMemoryBound(to: UInt8.self) }
