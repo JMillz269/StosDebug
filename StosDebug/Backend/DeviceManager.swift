@@ -81,6 +81,20 @@ final class DeviceManager: ObservableObject {
 
     private var tunnelHealthTask: Task<Bool, Never>?
     private var tunnelRebuildTask: Task<Void, Never>?
+    private let sessionLock = NSLock()
+    private var activeSessionCount = 0
+
+    var isDebugSessionActive: Bool {
+        sessionLock.withLock { activeSessionCount > 0 }
+    }
+
+    private func beginDebugSession() {
+        sessionLock.withLock { activeSessionCount += 1 }
+    }
+
+    private func endDebugSession() {
+        sessionLock.withLock { activeSessionCount = max(0, activeSessionCount - 1) }
+    }
     
     @Published var checkMounted: Task<Void, Never>? = nil
     @Published var isMounted: DeviceError = .none
@@ -197,6 +211,8 @@ final class DeviceManager: ObservableObject {
 
     @MainActor
     func ensureTunnelReady() async {
+        // Never probe or rebuild while a debug session is using the tunnel
+        if isDebugSessionActive { return }
         // Join an in-flight check/rebuild instead of starting another
         if let task = tunnelRebuildTask {
             await task.value
@@ -252,6 +268,8 @@ final class DeviceManager: ObservableObject {
     }
     
     func startDebugApp(bundleID: String? = nil, pid: Int? = nil, forcePID: Bool = false, launchApp: Bool = false, useScript: Bool = false, script: Scripts? = nil, whenJSCreated: ((RunJSViewModel) -> Void)? = nil) -> Int {
+                beginDebugSession()
+        defer { endDebugSession() }
         
         // ---- Keep-alive for the whole session ----
         var bgTask: UIBackgroundTaskIdentifier = .invalid
