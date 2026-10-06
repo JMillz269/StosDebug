@@ -44,8 +44,10 @@ struct ContentView: View {
 
     switch host {
     case "enableJIT".lowercased(), "enable-jit":
-        Task.detached(priority: .userInitiated) {
-            await deviceManager.ensureTunnelReady()
+        Thread.detachNewThread {
+            let ready = DispatchSemaphore(value: 0)
+            Task { await deviceManager.ensureTunnelReady(); ready.signal() }
+            ready.wait()
 
             try? Thread.sleep(forTimeInterval: 0.05)
 
@@ -161,34 +163,24 @@ struct AppView: View {
                         AppListRow(app: apps[index])
                             .padding()
                             .onTapGesture {
-                                Task.detached(priority: .userInitiated) {
-                                    await deviceManager.ensureTunnelReady()
+                                if deviceManager.isMounted != .success {
+                                    Alert.showSyncAlert(title: "DDI is not mounted", message: "Please go into settings and mount the Developer Disk Image.", actions: []) { _ in }
+                                    return
+                                }
 
-                                    await MainActor.run {
-                                        if deviceManager.isMounted != .success {
-                                            Alert.showSyncAlert(
-                                                title: "DDI is not mounted",
-                                                message: "Please go into settings and mount the Developer Disk Image.",
-                                                actions: []
-                                            ) { _ in }
-                                            return
-                                        }
-                                    }
+                                let app = apps[index]
+                                Thread.detachNewThread {
+                                    let ready = DispatchSemaphore(value: 0)
+                                    Task { await deviceManager.ensureTunnelReady(); ready.signal() }
+                                    ready.wait()
 
                                     if ProcessInfo.processInfo.hasTXM {
-                                        let script = Scripts.getScriptFromName(apps[index].name)
-
-                                        _ = deviceManager.startDebugApp(
-                                            bundleID: apps[index].bundleIdentifier,
-                                            useScript: true,
-                                            script: script
-                                        ) { _ in
-                                            DispatchQueue.main.async {
-                                                showingScript = true
-                                            }
+                                        let script = Scripts.getScriptFromName(app.name)
+                                        _ = deviceManager.startDebugApp(bundleID: app.bundleIdentifier, useScript: true, script: script) { _ in
+                                            DispatchQueue.main.async { showingScript = true }
                                         }
                                     } else {
-                                        _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier)
+                                        _ = deviceManager.startDebugApp(bundleID: app.bundleIdentifier)
                                     }
                                 }
                             }
@@ -265,7 +257,7 @@ struct AppView: View {
         isLoadingApps = true
         Task.detached(priority: .userInitiated) {
             do {
-                try await deviceManager.ensureTunnelReady()
+                await deviceManager.ensureTunnelReady()
                 await deviceManager.runCheckMounted(mountIfNeeded: true)
                 let result = try? await DeviceManager.shared.listApps()
                 await MainActor.run {
@@ -319,11 +311,10 @@ struct SettingsView: View {
                             }
                             
                             Task.detached(priority: .userInitiated) {
-                                do {
-                                    await deviceManager.ensureTunnelReady()
-                                } catch {
-                                    _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
-                                }
+        Thread.detachNewThread {
+            let ready = DispatchSemaphore(value: 0)
+            Task { await deviceManager.ensureTunnelReady(); ready.signal() }
+            ready.wait()
                             }
 
                         case .failure:
@@ -334,11 +325,8 @@ struct SettingsView: View {
                 
                 Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
                     Task.detached(priority: .userInitiated) {
-                        do {
                             await deviceManager.ensureTunnelReady()
-                        } catch {
-                            _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
-                        }
+                        } 
                     }
                 }
                 .disabled(deviceManager.adapter == nil && deviceManager.isMounting == .loading)
