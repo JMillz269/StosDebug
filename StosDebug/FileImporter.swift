@@ -26,9 +26,8 @@ class FileImporterManager: NSObject, ObservableObject, UIDocumentPickerDelegate 
         completion: @escaping (Result<[URL], Error>) -> Void
     ) {
         self.currentCompletion = { result in
-           Task { @MainActor in
+            Task { @MainActor in
                 completion(result)
-               self.stopAccessingSecurityScopedResources()
             }
         }
         
@@ -106,6 +105,7 @@ class FileImporterManager: NSObject, ObservableObject, UIDocumentPickerDelegate 
         }
         
         currentCompletion?(.success(accessibleURLs))
+        // Intentionally do not stop access here; caller may still be reading asynchronously.
         cleanup()
     }
     
@@ -116,37 +116,14 @@ class FileImporterManager: NSObject, ObservableObject, UIDocumentPickerDelegate 
             userInfo: [NSLocalizedDescriptionKey: "User cancelled the document picker."]
         )
         currentCompletion?(.failure(error))
+        stopAccessingSecurityScopedResources()
         cleanup()
     }
 }
 
 extension FileImporterManager {
-    
-    func importSingleFile(completion: @escaping (Result<URL, Error>) -> Void) {
-        importFiles(types: [.item], allowMultiple: false) { result in
-            switch result {
-            case .success(let urls):
-                if let firstURL = urls.first {
-                    completion(.success(firstURL))
-                } else {
-                    completion(.failure(NSError(domain: "FileImporterManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "No file selected."])))
-                }
-            case .failure(let error):
-                completion(.failure(error))
-            }
-        }
-    }
-    
-    func importMultipleFiles(completion: @escaping (Result<[URL], Error>) -> Void) {
-        importFiles(types: [.item], allowMultiple: true, completion: completion)
-    }
-    
-    func importImages(allowMultiple: Bool = false, completion: @escaping (Result<[URL], Error>) -> Void) {
-        importFiles(types: [.image], allowMultiple: allowMultiple, completion: completion)
-    }
-    
-    func importDocuments(allowMultiple: Bool = false, completion: @escaping (Result<[URL], Error>) -> Void) {
-        let documentTypes: [UTType] = [.pdf, .plainText, .rtf, .html, .xml, .json]
-        importFiles(types: documentTypes, allowMultiple: allowMultiple, completion: completion)
+    /// Call this after you've finished reading imported URLs.
+    func releaseImportedSecurityScopedResources() {
+        stopAccessingSecurityScopedResources()
     }
 }
