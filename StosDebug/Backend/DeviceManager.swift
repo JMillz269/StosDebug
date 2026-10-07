@@ -474,9 +474,9 @@ final class DeviceManager: ObservableObject {
         &cryptex
     )
 
-    defer {
-        cryptexd_free_installed_cryptex(cryptex)
-    }
+//    defer {
+//        cryptexd_free_installed_cryptex(cryptex)
+//    }
 
     if cryptex != nil {
         return true
