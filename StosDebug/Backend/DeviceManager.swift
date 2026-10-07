@@ -83,6 +83,9 @@ final class DeviceManager: ObservableObject {
     private var tunnelRebuildTask: Task<Void, Never>?
     private let sessionLock = NSLock()
     private var activeSessionCount = 0
+    
+    // GCD queue for blocking FFI calls to avoid starving the Swift cooperative pool
+    private let ffiQueue = DispatchQueue(label: "stosdebug.ffi", qos: .userInitiated, attributes: .concurrent)
 
     var isDebugSessionActive: Bool {
         sessionLock.withLock { activeSessionCount > 0 }
@@ -101,6 +104,20 @@ final class DeviceManager: ObservableObject {
 
     @Published var mountTask: Task<Void, Never>? = nil
     @Published var isMounting: DeviceError = .none
+    
+    // Helper to run blocking FFI work off the cooperative pool
+    private func runBlocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
+            ffiQueue.async { cont.resume(with: Result { try work() }) }
+        }
+    }
+    
+    // Snapshot handles on the main actor to prevent data races
+    @MainActor
+    private func currentHandles() -> (AdapterHandle, RsdHandshakeHandle)? {
+        guard let adapter, let handshake else { return nil }
+        return (adapter, handshake)
+    }
 
     func runMountDDI(_ check: Bool = false) {
         if check && isMounting == .success {
@@ -243,27 +260,17 @@ final class DeviceManager: ObservableObject {
     }
 
     private func tunnelHealthCheck(timeout: TimeInterval) async -> Bool {
-        await withCheckedContinuation { continuation in
-            let lock = NSLock()
-            var finished = false
-
-            func finish(_ value: Bool) {
-                lock.lock()
-                defer { lock.unlock() }
-
-                guard !finished else { return }
-                finished = true
-                continuation.resume(returning: value)
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                (try? await self.isMounted()) != nil
             }
-
-            Task.detached(priority: .userInitiated) {
-                let ok = (try? await self.isMounted()) != nil
-                finish(ok)
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                return false
             }
-
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                finish(false)
-            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
         }
     }
 
@@ -542,8 +549,7 @@ final class DeviceManager: ObservableObject {
     }
 
     func getAppIcon(bundleID: String) async -> Data? {
-        let adapter = adapter
-        let handshake = handshake
+        guard let (adapter, handshake) = await currentHandles() else { return nil }
 
         return await Task.detached(priority: .userInitiated) {
             var client: SpringBoardServicesClientHandle?
@@ -567,70 +573,72 @@ final class DeviceManager: ObservableObject {
     }
 
     func isMounted() async throws -> Bool {
-        guard let adapter, let handshake else {
+        guard let (adapter, handshake) = await currentHandles() else {
             throw "Tunnel not initialized"
         }
 
-        var cryptex: UnsafeMutablePointer<InstalledCryptexC>?
-        let cryptexError = cryptexd_installed_ddi(
-            adapter,
-            handshake,
-            &cryptex
-        )
-
-        defer {
-            cryptexd_free_installed_cryptex(cryptex)
-        }
-
-        if cryptex != nil {
-            return true
-        }
-
-        var mounterClient: MounterClientHandle?
-        let mounterError = image_mounter_connect_rsd(
-            adapter,
-            handshake,
-            &mounterClient
-        )
-
-        if let mounterError {
-            if let cryptexError {
-                throw cryptexError.pointee.message.string
-            }
-
-            throw mounterError.pointee.message.string
-        }
-
-        defer {
-            image_mounter_free(mounterClient)
-        }
-
-        var devices: UnsafeMutablePointer<plist_t?>?
-        var deviceCount: size_t = 0
-
-        if let error = image_mounter_copy_devices(
-            mounterClient,
-            &devices,
-            &deviceCount
-        ) {
-            throw error.pointee.message.string
-        }
-
-        if let devices {
-            for index in 0..<Int(deviceCount) {
-                if let device = devices[index] {
-                    plist_free(device)
-                }
-            }
-
-            idevice_data_free(
-                UnsafeMutableRawPointer(devices)
-                    .assumingMemoryBound(to: UInt8.self),
-                UInt(deviceCount * MemoryLayout<plist_t?>.stride)
+        return try await runBlocking {
+            var cryptex: UnsafeMutablePointer<InstalledCryptexC>?
+            let cryptexError = cryptexd_installed_ddi(
+                adapter,
+                handshake,
+                &cryptex
             )
-        }
 
-        return deviceCount > 0
+            defer {
+                cryptexd_free_installed_cryptex(cryptex)
+            }
+
+            if cryptex != nil {
+                return true
+            }
+
+            var mounterClient: MounterClientHandle?
+            let mounterError = image_mounter_connect_rsd(
+                adapter,
+                handshake,
+                &mounterClient
+            )
+
+            if let mounterError {
+                if let cryptexError {
+                    throw cryptexError.pointee.message.string
+                }
+
+                throw mounterError.pointee.message.string
+            }
+
+            defer {
+                image_mounter_free(mounterClient)
+            }
+
+            var devices: UnsafeMutablePointer<plist_t?>?
+            var deviceCount: size_t = 0
+
+            if let error = image_mounter_copy_devices(
+                mounterClient,
+                &devices,
+                &deviceCount
+            ) {
+                throw error.pointee.message.string
+            }
+
+            if let devices {
+                for index in 0..<Int(deviceCount) {
+                    if let device = devices[index] {
+                        plist_free(device)
+                    }
+                }
+
+                idevice_data_free(
+                    UnsafeMutableRawPointer(devices)
+                        .assumingMemoryBound(to: UInt8.self),
+                    UInt(deviceCount * MemoryLayout<plist_t?>.stride)
+                )
+            }
+
+            return deviceCount > 0
+        }
     }
 
     private func mountCryptexDDI() async throws {
@@ -793,6 +801,10 @@ final class DeviceManager: ObservableObject {
             throw "Failed to create Cryptexd handle"
         }
 
+        defer {
+            cryptexd_free(cryptexHandle)
+        }
+
         let identifierCString = strdup(identifier)
         defer {
             free(identifierCString)
@@ -841,6 +853,10 @@ final class DeviceManager: ObservableObject {
         let trustcache = try await downloadDataAsync(from: trustcachePath)
         let buildManifest = try await downloadDataAsync(from: manifestPath)
 
+        guard let (adapter, handshake) = await currentHandles() else {
+            throw "Tunnel not initialized"
+        }
+
         var lockdownClient: LockdowndClientHandle?
         var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
         if let err {
@@ -867,10 +883,8 @@ final class DeviceManager: ObservableObject {
             lockdownd_client_free(lockdownClient)
         }
 
-        let adapter = adapter
-        let handshake = handshake
-        try await Task.detached {
-            return await withUnsafeBytes(of: image, trustcache, buildManifest) { unsafePointer in
+        let mountErr = try await runBlocking {
+            withUnsafeBytes(of: image, trustcache, buildManifest) { unsafePointer in
                 image_mounter_mount_personalized_rsd(
                     mounterClient,
                     adapter,
@@ -881,12 +895,14 @@ final class DeviceManager: ObservableObject {
                     trustcache.count,
                     unsafePointer[2].uint8Pointer,
                     buildManifest.count,
-                    nil, uniqueChipId)
+                    nil,
+                    uniqueChipId
+                )
             }
-        }.value
+        }
 
-        if let err {
-            throw err.pointee.message.string
+        if let mountErr {
+            throw mountErr.pointee.message.string
         }
     }
 }
