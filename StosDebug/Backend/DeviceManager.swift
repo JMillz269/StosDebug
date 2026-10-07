@@ -283,7 +283,7 @@ final class DeviceManager: ObservableObject {
         // ---- Keep-alive for the whole session ----
         var bgTask: UIBackgroundTaskIdentifier = .invalid
         if useScript {
-            DispatchQueue.main.sync {
+            let startKeepAlive = {
                 bgTask = UIApplication.shared.beginBackgroundTask(withName: "StosDebugSession") {
                     UIApplication.shared.endBackgroundTask(bgTask)
                     bgTask = .invalid
@@ -291,6 +291,12 @@ final class DeviceManager: ObservableObject {
                 BackgroundLocationManager.shared.start()
                 BackgroundAudioManager.shared.start()
                 print("[Session] Background task and keep-alive started")
+            }
+
+            if Thread.isMainThread {
+                startKeepAlive()
+            } else {
+                DispatchQueue.main.async(execute: startKeepAlive)
             }
         }
         defer {
@@ -398,10 +404,8 @@ final class DeviceManager: ObservableObject {
 
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
-            if Thread.isMainThread {
-                jsViewModel = viewModel
-            } else {
-                DispatchQueue.main.sync { self.jsViewModel = viewModel }
+            DispatchQueue.main.async { [weak self] in
+                self?.jsViewModel = viewModel
             }
 
             whenJSCreated?(viewModel)
@@ -413,7 +417,15 @@ final class DeviceManager: ObservableObject {
             }
 
             if jsViewModel?.runScript(data: scriptData, name: script.scriptName) != nil {
-                semaphore.wait()
+                let waitResult = semaphore.wait(timeout: .now() + 30)
+                if waitResult == .timedOut {
+                    Alert.showSyncAlert(
+                        title: "Script Timeout",
+                        message: "Script execution timed out after 30 seconds.",
+                        alertHandler: { _ in }
+                    )
+                }
+
                 let _ = debug_proxy_send_raw(debugProxy, "\\x03", 1)
 
                 if !script.persistent {
