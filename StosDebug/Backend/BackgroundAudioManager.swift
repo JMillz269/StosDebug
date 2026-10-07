@@ -7,14 +7,21 @@ final class BackgroundAudioManager {
     private var player = AVAudioPlayerNode()
     private var timer: Timer?
     private var isRunning = false
+    private var interruptionObserver: NSObjectProtocol?
     
     private init() {
-        NotificationCenter.default.addObserver(
+        interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.recover()
+        }
+    }
+    
+    deinit {
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
         }
     }
     
