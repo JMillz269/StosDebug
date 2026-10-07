@@ -883,22 +883,18 @@ func mountPersonalDDI(
         lockdownd_client_free(lockdownClient)
     }
 
-        let mountErr = try await runBlocking {
-            withUnsafeBytes(of: image, trustcache, buildManifest) { unsafePointer in
-                return image_mounter_mount_personalized_rsd(
-                    mounterClient,
-                    adapter,
-                    handshake,
-                    unsafePointer[0].uint8Pointer,
-                    image.count,
-                    unsafePointer[1].uint8Pointer,
-                    trustcache.count,
-                    unsafePointer[2].uint8Pointer,
-                    buildManifest.count,
-                    nil,
-                    uniqueChipId
-                )
-            }
+        let mountErr: UnsafeMutablePointer<rsd_mount_err>? = try await runBlocking {
+            var err: UnsafeMutablePointer<rsd_mount_err>?
+            idevice_device_mount_image(
+                mounterClient,
+                adapter,
+                handshake,
+                image,
+                trustcache,
+                buildManifest,
+                &err
+            )
+            return err
         }
         
         if let mountErr {
