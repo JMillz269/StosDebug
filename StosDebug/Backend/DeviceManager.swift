@@ -801,10 +801,6 @@ final class DeviceManager: ObservableObject {
             throw "Failed to create Cryptexd handle"
         }
 
-        defer {
-            cryptexd_free(cryptexHandle)
-        }
-
         let identifierCString = strdup(identifier)
         defer {
             free(identifierCString)
