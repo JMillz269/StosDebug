@@ -71,7 +71,8 @@ struct Scripts: Equatable {
 }
 
 extension Scripts {
-    var isCustom: Bool { customURL != nil && customData != nil }
+    // FIX: custom script may be URL-backed OR data-backed.
+    var isCustom: Bool { customURL != nil || customData != nil }
     
     var scriptPath: URL {
         customURL ?? Bundle.main.bundleURL.appendingPathComponent(name)
@@ -110,38 +111,26 @@ extension Scripts {
     }
     
     func applyPatch(toURL template: URL, patchURL: URL) throws -> Data {
-        
         let patchContent = try String(contentsOf: patchURL, encoding: .utf8)
-        let template = try String(contentsOf: template, encoding: .utf8)
-        var result = template
-
-        var lines = patchContent.components(separatedBy: "\n")[...]
-        while let line = lines.first {
-            lines = lines.dropFirst()
-
-            if line == ":RPL" {
-                var findLines: [String] = []
-                var replaceLines: [String] = []
-
-                while let l = lines.first, l != ":WITH" {
-                    findLines.append(l)
-                    lines = lines.dropFirst()
-                }
-                lines = lines.dropFirst()
-
-                while let l = lines.first, l != ":ENDRPL" {
-                    replaceLines.append(l)
-                    lines = lines.dropFirst()
-                }
-                lines = lines.dropFirst()
-
-                let find = findLines.joined(separator: "\n")
-                let replace = replaceLines.joined(separator: "\n")
-                result = result.replacingOccurrences(of: find, with: replace)
+        let templateContent = try String(contentsOf: template, encoding: .utf8)
+        
+        var lines = templateContent.components(separatedBy: .newlines)
+        let patches = patchContent.components(separatedBy: .newlines)
+        
+        for patch in patches {
+            if patch.isEmpty { continue }
+            
+            let patchComponents = patch.split(separator: ":", maxSplits: 1).map(String.init)
+            guard patchComponents.count == 2 else { continue }
+            
+            let lineNumber = Int(patchComponents[0]) ?? 0
+            let newContent = patchComponents[1]
+            
+            if lineNumber > 0 && lineNumber <= lines.count {
+                lines[lineNumber - 1] = newContent
             }
         }
         
-
-        return result.data(using: .utf8) ?? Data()
+        return lines.joined(separator: "\n").data(using: .utf8)
     }
 }
