@@ -36,7 +36,6 @@ jobs:
         run: |
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r StosDebug.ipa Payload
 
       - name: Upload ipa
         uses: actions/upload-artifact@v4
