@@ -844,67 +844,67 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-    func mountPersonalDDI(
-        imagePath: String,
-        trustcachePath: String,
-        manifestPath: String
-    ) async throws {
-        let image = try await downloadDataAsync(from: imagePath)
-        let trustcache = try await downloadDataAsync(from: trustcachePath)
-        let buildManifest = try await downloadDataAsync(from: manifestPath)
+func mountPersonalDDI(
+    imagePath: String,
+    trustcachePath: String,
+    manifestPath: String
+) async throws {
+    let image = try await downloadDataAsync(from: imagePath)
+    let trustcache = try await downloadDataAsync(from: trustcachePath)
+    let buildManifest = try await downloadDataAsync(from: manifestPath)
 
-        guard let (adapter, handshake) = await currentHandles() else {
-            throw "Tunnel not initialized"
-        }
+    guard let (adapter, handshake) = await currentHandles() else {
+        throw "Tunnel not initialized"
+    }
 
-        var lockdownClient: LockdowndClientHandle?
-        var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
-        if let err {
-            throw err.pointee.message.string
-        }
+    var lockdownClient: LockdowndClientHandle?
+    var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
+    if let err {
+        throw err.pointee.message.string
+    }
 
-        var uniqueChipIdPlist: plist_t?
-        err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
-        if let err {
-            throw err.pointee.message.string
-        }
+    var uniqueChipIdPlist: plist_t?
+    err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
+    if let err {
+        throw err.pointee.message.string
+    }
 
-        var uniqueChipId: UInt64 = 0
-        plist_get_uint_val(uniqueChipIdPlist, &uniqueChipId)
+    var uniqueChipId: UInt64 = 0
+    plist_get_uint_val(uniqueChipIdPlist, &uniqueChipId)
 
-        var mounterClient: MounterClientHandle?
-        err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
-        if let err {
-            throw err.pointee.message.string
-        }
+    var mounterClient: MounterClientHandle?
+    err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
+    if let err {
+        throw err.pointee.message.string
+    }
 
-        defer {
-            image_mounter_free(mounterClient)
-            lockdownd_client_free(lockdownClient)
-        }
+    defer {
+        image_mounter_free(mounterClient)
+        lockdownd_client_free(lockdownClient)
+    }
 
-        let mountErr = try await runBlocking {
-            withUnsafeBytes(of: image, trustcache, buildManifest) { unsafePointer in
-                image_mounter_mount_personalized_rsd(
-                    mounterClient,
-                    adapter,
-                    handshake,
-                    unsafePointer[0].uint8Pointer,
-                    image.count,
-                    unsafePointer[1].uint8Pointer,
-                    trustcache.count,
-                    unsafePointer[2].uint8Pointer,
-                    buildManifest.count,
-                    nil,
-                    uniqueChipId
-                )
-            }
-        }
-
-        if let mountErr {
-            throw mountErr.pointee.message.string
+    let mountErr = try await runBlocking {
+        withUnsafeBytes(of: image, trustcache, buildManifest) { unsafePointer in
+            image_mounter_mount_personalized_rsd(
+                mounterClient,
+                adapter,
+                handshake,
+                unsafePointer[0].uint8Pointer,
+                image.count,
+                unsafePointer[1].uint8Pointer,
+                trustcache.count,
+                unsafePointer[2].uint8Pointer,
+                buildManifest.count,
+                nil,
+                uniqueChipId
+            )
         }
     }
+
+    if let mountErr {
+        throw mountErr.pointee.message.string
+    }
+}
 }
 
 func withUnsafeBytes<R>(
@@ -941,8 +941,6 @@ struct SideApp: Codable, Identifiable, Equatable {
 extension String: @retroactive LocalizedError {
     public var errorDescription: String? { self }
 }
-
-extension OpaquePointer: @retroactive @unchecked Sendable { }
 
 // MARK: - Helpers
 
