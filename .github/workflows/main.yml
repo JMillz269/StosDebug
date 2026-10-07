@@ -34,11 +34,14 @@ jobs:
 
       - name: Create unsigned ipa
         run: |
+          rm -rf Payload
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/*.app Payload/
-
+          /usr/bin/zip -r StosDebug.ipa Payload
+      
       - name: Upload ipa
         uses: actions/upload-artifact@v4
         with:
           name: StosDebug.ipa
           path: StosDebug.ipa
+          compression-level: 0
