@@ -131,6 +131,6 @@ extension Scripts {
             }
         }
         
-        return lines.joined(separator: "\n").data(using: .utf8)
+            return lines.joined(separator: "\n").data(using: .utf8) ?? Data()
     }
 }
