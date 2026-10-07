@@ -416,28 +416,28 @@ final class DeviceManager: ObservableObject {
                 return 3
             }
 
-            if jsViewModel?.runScript(data: scriptData, name: script.scriptName) != nil {
-                let waitResult = semaphore.wait(timeout: .now() + 30)
-                if waitResult == .timedOut {
-                    Alert.showSyncAlert(
-                        title: "Script Timeout",
-                        message: "Script execution timed out after 30 seconds.",
-                        alertHandler: { _ in }
-                    )
-                }
-
-                let _ = debug_proxy_send_raw(debugProxy, "\\x03", 1)
-
-                if !script.persistent {
-                    if let (key, _) = Scripts.customScript.first(where: { $0.value == script }) {
-                        Scripts.customScript.removeValue(forKey: key)
-                    }
-                }
-
-                usleep(500)
-
-                debug_proxy_free(debugProxy)
+            viewModel.runScript(data: scriptData, name: script.scriptName)
+            
+            let waitResult = semaphore.wait(timeout: .now() + 30)
+            if waitResult == .timedOut {
+                Alert.showSyncAlert(
+                    title: "Script Timeout",
+                    message: "Script execution timed out after 30 seconds.",
+                    alertHandler: { _ in }
+                )
             }
+            
+            let _ = debug_proxy_send_raw(debugProxy, "\\x03", 1)
+            
+            if !script.persistent {
+                if let (key, _) = Scripts.customScript.first(where: { $0.value == script }) {
+                    Scripts.customScript.removeValue(forKey: key)
+                }
+            }
+            
+            usleep(500)
+            debug_proxy_free(debugProxy)
+            
         } else {
             let attachStr = String(format: "vAttach;%llx", finalPID)
             let attachCmd = debugserver_command_new(attachStr, nil, 0)
