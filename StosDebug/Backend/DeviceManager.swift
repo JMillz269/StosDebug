@@ -844,74 +844,82 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-func mountPersonalDDI(
-    imagePath: String,
-    trustcachePath: String,
-    manifestPath: String
-) async throws {
-    let image = try await downloadDataAsync(from: imagePath)
-    let trustcache = try await downloadDataAsync(from: trustcachePath)
-    let buildManifest = try await downloadDataAsync(from: manifestPath)
+    func mountPersonalDDI(
+        imagePath: String,
+        trustcachePath: String,
+        manifestPath: String
+    ) async throws {
+        let image = try await downloadDataAsync(from: imagePath)
+        let trustcache = try await downloadDataAsync(from: trustcachePath)
+        let buildManifest = try await downloadDataAsync(from: manifestPath)
 
-    guard let (adapter, handshake) = await currentHandles() else {
-        throw "Tunnel not initialized"
-    }
-
-    var lockdownClient: LockdowndClientHandle?
-    var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
-    if let err {
-        throw err.pointee.message.string
-    }
-
-    var uniqueChipIdPlist: plist_t?
-    err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
-    if let err {
-        throw err.pointee.message.string
-    }
-
-    var uniqueChipId: UInt64 = 0
-    plist_get_uint_val(uniqueChipIdPlist, &uniqueChipId)
-
-    var mounterClient: MounterClientHandle?
-    err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
-    if let err {
-        throw err.pointee.message.string
-    }
-
-    defer {
-        image_mounter_free(mounterClient)
-        lockdownd_client_free(lockdownClient)
-    }
-
-        let mountErr: UnsafeMutablePointer<rsd_mount_err>? = try await runBlocking {
-            var err: UnsafeMutablePointer<rsd_mount_err>?
-            idevice_device_mount_image(
-                mounterClient,
-                adapter,
-                handshake,
-                image,
-                trustcache,
-                buildManifest,
-                &err
-            )
-            return err
+        guard let (adapter, handshake) = await currentHandles() else {
+            throw "Tunnel not initialized"
         }
-        
-        if let mountErr {
-            throw mountErr.pointee.message.string
-        }
-}
-}
 
-func withUnsafeBytes<R>(
-    of buffers: Data...,
-    body: ([UnsafeRawBufferPointer]) throws -> R
-) rethrows -> R {
-    func open(_ remaining: ArraySlice<Data>, _ ptrs: [UnsafeRawBufferPointer]) throws -> R {
-        guard let head = remaining.first else { return try body(ptrs) }
-        return try head.withUnsafeBytes { try open(remaining.dropFirst(), ptrs + [$0]) }
+        var lockdownClient: LockdowndClientHandle?
+        var err = lockdownd_connect_rsd(adapter, handshake, &lockdownClient)
+        if let err {
+            throw err.pointee.message.string
+        }
+
+        var uniqueChipIdPlist: plist_t?
+        err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
+        if let err {
+            throw err.pointee.message.string
+        }
+
+        var chipId: UInt64 = 0
+        plist_get_uint_val(uniqueChipIdPlist, &chipId)
+
+        var mounterClient: MounterClientHandle?
+        err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
+        if let err {
+            throw err.pointee.message.string
+        }
+
+        defer {
+            image_mounter_free(mounterClient)
+            lockdownd_client_free(lockdownClient)
+        }
+
+        // Immutable copies: @Sendable closures can't capture `var`s.
+        let mounter = mounterClient
+        let uniqueChipId = chipId
+
+        // Returns String? (Sendable) so no C pointer crosses the closure boundary.
+        let mountError: String? = try await runBlocking { () -> String? in
+            let result: UnsafeMutablePointer<IdeviceFfiError>? =
+                image.withUnsafeBytes { (imagePtr: UnsafeRawBufferPointer) in
+                    trustcache.withUnsafeBytes { (trustPtr: UnsafeRawBufferPointer) in
+                        buildManifest.withUnsafeBytes { (manifestPtr: UnsafeRawBufferPointer) in
+                            image_mounter_mount_personalized_rsd(
+                                mounter,
+                                adapter,
+                                handshake,
+                                imagePtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                                image.count,
+                                trustPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                                trustcache.count,
+                                manifestPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                                buildManifest.count,
+                                nil,
+                                uniqueChipId
+                            )
+                        }
+                    }
+                }
+
+            if let result {
+                return String(cString: result.pointee.message)
+            }
+            return nil
+        }
+
+        if let mountError {
+            throw mountError
+        }
     }
-    return try open(buffers[...], [])
 }
 
 struct SideApp: Codable, Identifiable, Equatable {
