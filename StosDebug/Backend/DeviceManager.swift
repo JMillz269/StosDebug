@@ -768,6 +768,27 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
         return data
     }
 
+        /// Deletes the locally cached DDI files (Documents/DDI) that appear in the Files app.
+    private func deleteLocalDDIFiles() {
+        let ddiDirectory = URL.documentsDirectory
+            .appendingPathComponent("DDI", isDirectory: true)
+
+        guard fileManager.fileExists(atPath: ddiDirectory.path) else { return }
+
+        do {
+            // Remove the contents but keep the folder itself.
+            let contents = try fileManager.contentsOfDirectory(
+                at: ddiDirectory,
+                includingPropertiesForKeys: nil
+            )
+            for item in contents {
+                try fileManager.removeItem(at: item)
+            }
+        } catch {
+            print("Failed to delete local DDI files: \(error.localizedDescription)")
+        }
+    }
+    
     func runUnmountDDI() {
         Task {
             do {
@@ -846,6 +867,7 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
         if let uninstallError {
             throw uninstallError.pointee.message.string
         }
+                deleteLocalDDIFiles()
     }
 
     func runCheckMounted(mountIfNeeded: Bool = false) {
