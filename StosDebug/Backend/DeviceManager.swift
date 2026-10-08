@@ -485,24 +485,32 @@ final class DeviceManager: ObservableObject {
         defer { installation_proxy_client_free(client) }
 
         var resultPlist: UnsafeMutableRawPointer? = nil
-        var resultCount: Int = 0
-        let getAppsError = installation_proxy_get_apps(client, "User", nil, 0, &resultPlist, &resultCount)
-        if let error = getAppsError {
-            print("second one")
-            print(error.pointee.message.string)
-            return []
-        }
+var resultCount: Int = 0
+let getAppsError = installation_proxy_get_apps(client, "User", nil, 0, &resultPlist, &resultCount)
 
-        guard let appsPointer = resultPlist else { return [] }
-        let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
-
-        defer {
-            for i in 0..<resultCount {
-                if let node = appsArray[i] {
-                    plist_free(node)
-                }
+defer {
+    if let resultPlist {
+        let appsArray = resultPlist.assumingMemoryBound(to: plist_t?.self)
+        for i in 0..<resultCount {
+            if let node = appsArray[i] {
+                plist_free(node)
             }
         }
+        idevice_data_free(
+            resultPlist.assumingMemoryBound(to: UInt8.self),
+            UInt(resultCount * MemoryLayout<plist_t?>.stride)
+        )
+    }
+}
+
+if let error = getAppsError {
+    print("second one")
+    print(error.pointee.message.string)
+    return []
+}
+
+guard let appsPointer = resultPlist else { return [] }
+let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
 
         var sideApps: [SideApp] = []
 
