@@ -157,13 +157,13 @@ final class DeviceManager: ObservableObject {
         }
     }
         func setupTunnel() async throws {
-            let newPairing: RpPairingFileHandle? = try await runBlocking {
+            let newPairing: RpPairingFileHandle? = try await runBlocking { [self] in
             let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
             idevice_init_logger(Debug, Debug, string)
             defer { free(string) }
 
             var pairingHandle: RpPairingFileHandle?
-            let err = rp_pairing_file_read(pairingFileURL.path, &pairingHandle)
+            let err = rp_pairing_file_read(self.pairingFileURL.path, &pairingHandle)
             if let err {
                 throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
             }
@@ -746,20 +746,7 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
             throw installError
         }
     }
-
-    func downloadFile(from urlString: String, to destination: URL) async throws {
-        guard let url = URL(string: urlString) else { throw "Invalid URL: \(urlString)" }
-    
-        let (tmp, response) = try await URLSession.shared.download(from: url)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-        guard (200..<300).contains(status) else {
-            throw "Download failed (HTTP \(status)) for \(url.lastPathComponent)"
-        }
-    
-        try? fileManager.removeItem(at: destination)
-        try fileManager.moveItem(at: tmp, to: destination)
-    }
-    
+   
     func downloadDataAsync(from urlString: String) async throws -> Data {
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "InvalidURL", code: 0)
