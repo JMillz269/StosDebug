@@ -868,24 +868,30 @@ final class DeviceManager: ObservableObject {
         }
 
         var uniqueChipIdPlist: plist_t?
-        err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
-        if let err {
-            throw err.pointee.message.string
-        }
+            err = lockdownd_get_value(lockdownClient, "UniqueChipID", nil, &uniqueChipIdPlist)
+            if let err {
+                throw err.pointee.message.string
+            }
 
-        var chipId: UInt64 = 0
-        plist_get_uint_val(uniqueChipIdPlist, &chipId)
-
-        var mounterClient: MounterClientHandle?
-        err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
-        if let err {
-            throw err.pointee.message.string
+            defer {
+                if let uniqueChipIdPlist {
+                plist_free(uniqueChipIdPlist)
         }
+}
 
-        defer {
-            image_mounter_free(mounterClient)
-            lockdownd_client_free(lockdownClient)
-        }
+var chipId: UInt64 = 0
+plist_get_uint_val(uniqueChipIdPlist, &chipId)
+
+var mounterClient: MounterClientHandle?
+err = image_mounter_connect_rsd(adapter, handshake, &mounterClient)
+if let err {
+    throw err.pointee.message.string
+}
+
+defer {
+    image_mounter_free(mounterClient)
+    lockdownd_client_free(lockdownClient)
+}
 
         // Immutable copies: @Sendable closures can't capture `var`s.
         let mounter = mounterClient
