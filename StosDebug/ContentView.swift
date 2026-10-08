@@ -34,75 +34,70 @@ struct ContentView: View {
 
             switch host {
             case "enableJIT".lowercased(), "enable-jit":
-                Thread.detachNewThread {
-                    let ready = DispatchSemaphore(value: 0)
-                    Task {
-                        await deviceManager.ensureTunnelReady()
-                        ready.signal()
-                    }
-                    ready.wait()
-
-                    try? Thread.sleep(forTimeInterval: 0.05)
-
-                    let decoder = URLQueryDecoder()
-
-                    guard var params = try? decoder.decode(EnableJIT.self, from: url) else {
-                        print("unable to decode")
-                        return
-                    }
-
-                    let scheme = url.scheme?.lowercased() ?? ""
-                    let isStosDebug = scheme == "stosdebug"
-
-                    if isStosDebug, (params.appName?.isEmpty ?? true) {
-                        print("unable to decode: appName is required for stosdebug:// URLs")
-                        return
-                    }
-
-                    var shouldLaunchApp: Bool = false
-                    if params.pid != nil {
-                        shouldLaunchApp = params.relaunchApp ?? true
-                    }
-
-                    let launchApp = shouldLaunchApp
-                    let bundleId = params.bundleId
-                    let pid = params.pid
-                    let forcePID = params.forcePID ?? false
-
-                    if ProcessInfo.processInfo.hasTXM {
-                        // Base64 script wins; otherwise pick by appName; otherwise Universal.
-                        let script: Scripts
-                        if let data = params.scriptData {
-                            let name = (params.appName?.isEmpty == false ? params.appName! : bundleId)
-                            script = Scripts.custom(name: name.lowercased(), data: data)
-                        } else if let appName = params.appName, !appName.isEmpty {
-                            script = Scripts.getScriptFromName(appName)
-                        } else if isStosDebug {
-                            print("unable to decode: appName is required for stosdebug:// URLs without a script")
-                            return
-                        } else {
-                            script = .universal
-                        }
-
-                        _ = deviceManager.startDebugApp(
-                            bundleID: bundleId,
-                            pid: pid,
-                            forcePID: forcePID,
-                            launchApp: launchApp,
-                            useScript: true,
-                            script: script
-                        ) { _ in
-                            DispatchQueue.main.async { showingScript = true }
-                        }
-                    } else {
-                        _ = deviceManager.startDebugApp(
-                            bundleID: bundleId,
-                            pid: pid,
-                            forcePID: forcePID,
-                            launchApp: launchApp
-                        )
-                    }
+                Task.detached(priority: .userInitiated) {
+                await deviceManager.ensureTunnelReady()
+    
+            // Replaces Thread.sleep(forTimeInterval: 0.05)
+            try? await Task.sleep(nanoseconds: 50_000_000)
+    
+            let decoder = URLQueryDecoder()
+    
+            guard let params = try? decoder.decode(EnableJIT.self, from: url) else {
+                print("unable to decode")
+                return
+            }
+    
+            let scheme = url.scheme?.lowercased() ?? ""
+            let isStosDebug = scheme == "stosdebug"
+    
+            if isStosDebug, (params.appName?.isEmpty ?? true) {
+                print("unable to decode: appName is required for stosdebug:// URLs")
+                return
+            }
+    
+            var shouldLaunchApp: Bool = false
+            if params.pid != nil {
+                shouldLaunchApp = params.relaunchApp ?? true
+            }
+    
+            let launchApp = shouldLaunchApp
+            let bundleId = params.bundleId
+            let pid = params.pid
+            let forcePID = params.forcePID ?? false
+    
+            if ProcessInfo.processInfo.hasTXM {
+                let script: Scripts
+                if let data = params.scriptData {
+                    let name = (params.appName?.isEmpty == false ? params.appName! : bundleId)
+                    script = Scripts.custom(name: name.lowercased(), data: data)
+                } else if let appName = params.appName, !appName.isEmpty {
+                    script = Scripts.getScriptFromName(appName)
+                } else if isStosDebug {
+                    print("unable to decode: appName is required for stosdebug:// URLs without a script")
+                    return
+                } else {
+                    script = .universal
                 }
+    
+                _ = deviceManager.startDebugApp(
+                    bundleID: bundleId,
+                    pid: pid,
+                    forcePID: forcePID,
+                    launchApp: launchApp,
+                    useScript: true,
+                    script: script
+                ) { _ in
+                    DispatchQueue.main.async { showingScript = true }
+                }
+            } else {
+                _ = deviceManager.startDebugApp(
+                    bundleID: bundleId,
+                    pid: pid,
+                    forcePID: forcePID,
+                    launchApp: launchApp
+                )
+            }
+        }
 
             default:
                 break
@@ -163,19 +158,14 @@ struct AppView: View {
                                     ) { _ in }
                                     return
                                 }
-
+                                
                                 let app = apps[index]
-                                Thread.detachNewThread {
-                                    let ready = DispatchSemaphore(value: 0)
-                                    Task {
-                                        await deviceManager.ensureTunnelReady()
-                                        ready.signal()
-                                    }
-                                    ready.wait()
-
+                                Task.detached(priority: .userInitiated) {
+                                    await deviceManager.ensureTunnelReady()
+                                
                                     if ProcessInfo.processInfo.hasTXM {
                                         let script = Scripts.getScriptFromName(app.name)
-
+                                
                                         _ = deviceManager.startDebugApp(
                                             bundleID: app.bundleIdentifier,
                                             useScript: true,
@@ -262,14 +252,13 @@ struct AppView: View {
         }
     }
 
-    private func startTunnel() {
-        isLoadingApps = true
-        Thread.detachNewThread {
-            Task {
-                await deviceManager.ensureTunnelReady()
-                await deviceManager.runCheckMounted(mountIfNeeded: true)
-                let result = try? await DeviceManager.shared.listApps()
-                await MainActor.run {
+            private func startTunnel() {
+                isLoadingApps = true
+                Task {
+                    await deviceManager.ensureTunnelReady()
+                    await deviceManager.runCheckMounted(mountIfNeeded: true)
+                    let result = try? await DeviceManager.shared.listApps()
+            
                     let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
                     let newHash = newApps.map(\.bundleIdentifier).joined().hashValue
                     let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
@@ -279,8 +268,6 @@ struct AppView: View {
                     isLoadingApps = false
                 }
             }
-        }
-    }
 }
 
 struct SettingsView: View {
