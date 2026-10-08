@@ -550,26 +550,35 @@ final class DeviceManager: ObservableObject {
     func getAppIcon(bundleID: String) async -> Data? {
         guard let (adapter, handshake) = await currentHandles() else { return nil }
 
-        return await Task.detached(priority: .userInitiated) {
+            return await Task.detached(priority: .userInitiated) {
             var client: SpringBoardServicesClientHandle?
 
             if springboard_services_connect_rsd(adapter, handshake, &client) != nil {
-                return nil
+            return nil
+        }
+
+        defer { springboard_services_free(client) }
+
+        var iconData: UnsafeMutableRawPointer?
+        var iconDataLen: Int = 0
+
+        if springboard_services_get_icon(client, bundleID, &iconData, &iconDataLen) != nil {
+            return nil
+        }
+
+        defer {
+            if let iconData {
+                idevice_data_free(
+                    iconData.assumingMemoryBound(to: UInt8.self),
+                    UInt(iconDataLen)
+                )
             }
+        }
 
-            var iconData: UnsafeMutableRawPointer?
-            var iconDataLen: Int = 0
-
-            if springboard_services_get_icon(client, bundleID, &iconData, &iconDataLen) != nil {
-                springboard_services_free(client)
-                return nil
-            }
-
-            springboard_services_free(client)
-
-            return Data(bytes: iconData!, count: iconDataLen)
-        }.value
-    }
+        guard let iconData, iconDataLen > 0 else { return nil }
+        return Data(bytes: iconData, count: iconDataLen)
+    }.value
+}
 
     func isMounted() async throws -> Bool {
         guard let (adapter, handshake) = await currentHandles() else {
