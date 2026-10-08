@@ -157,21 +157,17 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-    func setupTunnel() async throws {
-        if !fileManager.fileExists(atPath: pairingFileURL1.path) && fileManager.fileExists(atPath: pairingFileURL2.path) {
-            pairingFileURL = pairingFileURL2
-        }
+        let newPairing: RpPairingFileHandle? = try await runBlocking {
+            let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
+            idevice_init_logger(Debug, Debug, string)
+            defer { free(string) }
 
-        let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
-        idevice_init_logger(Debug, Debug, string)
-
-        var newPairing: RpPairingFileHandle?
-        let err = rp_pairing_file_read(pairingFileURL.path, &newPairing)
-
-        free(string)
-
-        if let err {
-            throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
+            var pairingHandle: RpPairingFileHandle?
+            let err = rp_pairing_file_read(pairingFileURL.path, &pairingHandle)
+            if let err {
+                throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
+            }
+            return pairingHandle
         }
 
         pairing = newPairing
@@ -187,10 +183,9 @@ final class DeviceManager: ObservableObject {
         }
 
         let pairing = pairing
-
-        try await Task.detached {
-            var newAdapter: AdapterHandle?
-            var newHandshake: RsdHandshakeHandle?
+        let (newAdapter, newHandshake): (AdapterHandle?, RsdHandshakeHandle?) = try await runBlocking {
+            var createdAdapter: AdapterHandle?
+            var createdHandshake: RsdHandshakeHandle?
 
             let result = withUnsafePointer(to: &addr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { ptr in
@@ -201,8 +196,8 @@ final class DeviceManager: ObservableObject {
                         pairing,
                         nil,
                         nil,
-                        &newAdapter,
-                        &newHandshake
+                        &createdAdapter,
+                        &createdHandshake
                     )
                 }
             }
@@ -211,13 +206,13 @@ final class DeviceManager: ObservableObject {
                 throw "Tunnel creation failed: \(result.pointee.code) \(result.pointee.message.string)"
             }
 
-            let adapter = newAdapter
-            let handshake = newHandshake
-            await MainActor.run {
-                self.adapter = adapter
-                self.handshake = handshake
-            }
-        }.value
+            return (createdAdapter, createdHandshake)
+        }
+
+        await MainActor.run {
+            self.adapter = newAdapter
+            self.handshake = newHandshake
+        }
     }
 
     private func clearTunnelHandles() {
@@ -847,7 +842,6 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
 
         let identifier: String = try await runBlocking {
             var installed: UnsafeMutablePointer<InstalledCryptexC>?
-
             if let installedError = cryptexd_installed_ddi(adapter, handshake, &installed) {
                 throw installedError.pointee.message.string
             }
@@ -860,7 +854,6 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
             guard let identifierPtr = installed.pointee.identifier else {
                 throw "Unable to determine installed Cryptex identifier"
             }
-
             return String(cString: identifierPtr)
         }
 
