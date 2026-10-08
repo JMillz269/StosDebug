@@ -156,8 +156,8 @@ final class DeviceManager: ObservableObject {
             }
         }
     }
-
-        let newPairing: RpPairingFileHandle? = try await runBlocking {
+        func setupTunnel() async throws {
+            let newPairing: RpPairingFileHandle? = try await runBlocking {
             let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
             idevice_init_logger(Debug, Debug, string)
             defer { free(string) }
