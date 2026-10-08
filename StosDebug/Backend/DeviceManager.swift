@@ -339,9 +339,22 @@ final class DeviceManager: ObservableObject {
         err = debug_proxy_connect_rsd(adapter, handshake, &debugProxy)
 
         if let err {
-            print("Debug proxy failed: \(err.pointee.message.string)")
-            return 1
-        }
+        print("Debug proxy failed: \(err.pointee.message.string)")
+    if let remoteServer {
+        remote_server_free(remoteServer)
+    }
+    return 1
+}
+
+// Free both handles on every exit path from here on
+defer {
+    if let debugProxy {
+        debug_proxy_free(debugProxy)
+    }
+    if let remoteServer {
+        remote_server_free(remoteServer)
+    }
+}
 
         var finalPID = UInt64(pid ?? 0)
 
