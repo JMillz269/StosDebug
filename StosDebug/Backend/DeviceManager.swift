@@ -404,6 +404,9 @@ final class DeviceManager: ObservableObject {
         let disableAckCommand = debugserver_command_new("QStartNoAckMode", nil, 0)
         debug_proxy_send_command(debugProxy, disableAckCommand, &disableResponse)
         debugserver_command_free(disableAckCommand)
+        if disableResponse != nil {
+        idevice_string_free(disableResponse)
+    }
         debug_proxy_set_ack_mode(debugProxy, 0)
 
         if useScript, let script {
