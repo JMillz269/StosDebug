@@ -256,7 +256,7 @@ struct AppView: View {
                 isLoadingApps = true
                 Task {
                     await deviceManager.ensureTunnelReady()
-                    await deviceManager.runCheckMounted(mountIfNeeded: true)
+                    deviceManager.runCheckMounted(mountIfNeeded: true)
                     let result = try? await DeviceManager.shared.listApps()
             
                     let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
