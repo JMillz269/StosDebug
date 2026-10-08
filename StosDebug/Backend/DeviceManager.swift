@@ -85,7 +85,7 @@ final class DeviceManager: ObservableObject {
     private var activeSessionCount = 0
     
     // GCD queue for blocking FFI calls to avoid starving the Swift cooperative pool
-    private let ffiQueue = DispatchQueue(label: "stosdebug.ffi", qos: .userInitiated, attributes: .concurrent)
+    private let ffiQueue = DispatchQueue(label: "stosdebug.ffi", qos: .userInitiated)
 
     var isDebugSessionActive: Bool {
         sessionLock.withLock { activeSessionCount > 0 }
@@ -127,7 +127,9 @@ final class DeviceManager: ObservableObject {
         mountTask?.cancel()
 
         mountTask = Task {
-            await MainActor.run {
+                        // Ensure adapter/handshake are healthy before attempting mount.
+             await ensureTunnelReady()
+             await MainActor.run {
                 isMounting = .loading
             }
 
@@ -717,8 +719,7 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
                 continue
             }
 
-            let data = try await downloadDataAsync(from: file.url)
-            try data.write(to: destination, options: .atomic)
+                try await downloadFile(from: file.url, to: destination)
         }
 
         var assets: OpaquePointer?
@@ -739,18 +740,31 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
             cryptex1_assets_free(assets)
         }
 
-        let installError = cryptexd_install_ddi(
-            adapter,
-            handshake,
-            assets,
-            nil
-        )
-
+        let installError: String? = try await runBlocking {
+            if let e = cryptexd_install_ddi(adapter, handshake, assets, nil) {
+                return String(cString: e.pointee.message)
+            }
+            return nil
+        }
+        
         if let installError {
-            throw installError.pointee.message.string
+            throw installError
         }
     }
 
+    func downloadFile(from urlString: String, to destination: URL) async throws {
+        guard let url = URL(string: urlString) else { throw "Invalid URL: \(urlString)" }
+    
+        let (tmp, response) = try await URLSession.shared.download(from: url)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200..<300).contains(status) else {
+            throw "Download failed (HTTP \(status)) for \(url.lastPathComponent)"
+        }
+    
+        try? fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: tmp, to: destination)
+    }
+    
     func downloadDataAsync(from urlString: String) async throws -> Data {
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "InvalidURL", code: 0)
@@ -766,6 +780,26 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
         }
 
         return data
+    }
+
+    /// Streams a remote file to disk and validates HTTP status.
+    /// Use this for large DDI assets to avoid loading whole files into memory.
+    func downloadFile(from urlString: String, to destination: URL) async throws {
+        guard let url = URL(string: urlString) else {
+            throw "Invalid URL: \(urlString)"
+        }
+
+        let (tmpURL, response) = try await URLSession.shared.download(from: url)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200..<300).contains(status) else {
+            throw "Download failed (HTTP \(status)) for \(url.lastPathComponent)"
+        }
+
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+
+        try fileManager.moveItem(at: tmpURL, to: destination)
     }
 
         /// Deletes the locally cached DDI files (Documents/DDI) that appear in the Files app.
@@ -807,67 +841,46 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
     }
 
     private func unmountDDI() async throws {
-        guard let adapter, let handshake else {
+        guard let (adapter, handshake) = await currentHandles() else {
             throw "Tunnel not initialized"
         }
 
-        var installed: UnsafeMutablePointer<InstalledCryptexC>?
+        let identifier: String = try await runBlocking {
+            var installed: UnsafeMutablePointer<InstalledCryptexC>?
 
-        let installedError = cryptexd_installed_ddi(
-            adapter,
-            handshake,
-            &installed
-        )
+            if let installedError = cryptexd_installed_ddi(adapter, handshake, &installed) {
+                throw installedError.pointee.message.string
+            }
 
-        if let installedError {
-            throw installedError.pointee.message.string
+            guard let installed else {
+                throw "No Cryptex DDI is currently installed"
+            }
+            defer { cryptexd_free_installed_cryptex(installed) }
+
+            guard let identifierPtr = installed.pointee.identifier else {
+                throw "Unable to determine installed Cryptex identifier"
+            }
+
+            return String(cString: identifierPtr)
         }
 
-        guard let installed else {
-            throw "No Cryptex DDI is currently installed"
+        try await runBlocking {
+            var cryptexHandle: CryptexdHandle?
+            if let connectError = cryptexd_connect_rsd(adapter, handshake, &cryptexHandle) {
+                throw connectError.pointee.message.string
+            }
+
+            guard let cryptexHandle else {
+                throw "Failed to create Cryptexd handle"
+            }
+
+            let identifierCString = strdup(identifier)
+            defer { free(identifierCString) }
+
+            if let uninstallError = cryptexd_uninstall(cryptexHandle, identifierCString, nil) {
+                throw uninstallError.pointee.message.string
+            }
         }
-
-        defer {
-            cryptexd_free_installed_cryptex(installed)
-        }
-
-        guard let identifierPtr = installed.pointee.identifier else {
-            throw "Unable to determine installed Cryptex identifier"
-        }
-
-        let identifier = String(cString: identifierPtr)
-
-        var cryptexHandle: CryptexdHandle?
-
-        let connectError = cryptexd_connect_rsd(
-            adapter,
-            handshake,
-            &cryptexHandle
-        )
-
-        if let connectError {
-            throw connectError.pointee.message.string
-        }
-
-        guard let cryptexHandle else {
-            throw "Failed to create Cryptexd handle"
-        }
-
-        let identifierCString = strdup(identifier)
-        defer {
-            free(identifierCString)
-        }
-
-        let uninstallError = cryptexd_uninstall(
-            cryptexHandle,
-            identifierCString,
-            nil
-        )
-
-        if let uninstallError {
-            throw uninstallError.pointee.message.string
-        }
-                deleteLocalDDIFiles()
     }
 
     func runCheckMounted(mountIfNeeded: Bool = false) {
