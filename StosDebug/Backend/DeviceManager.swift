@@ -411,11 +411,10 @@ final class DeviceManager: ObservableObject {
 
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
-            DispatchQueue.main.async { [weak self] in
-                self?.jsViewModel = viewModel
-            }
-
-            whenJSCreated?(viewModel)
+                DispatchQueue.main.async { [weak self] in
+                    self?.jsViewModel = viewModel
+                    whenJSCreated?(viewModel)
+                        }
 
             guard let scriptData = script.scriptData else {
                 Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
