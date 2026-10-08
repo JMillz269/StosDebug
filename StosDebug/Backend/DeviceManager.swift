@@ -458,7 +458,6 @@ defer {
             }
             
             usleep(500)
-            debug_proxy_free(debugProxy)
             
         } else {
             let attachStr = String(format: "vAttach;%llx", finalPID)
