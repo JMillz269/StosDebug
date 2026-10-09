@@ -144,8 +144,23 @@ final class DeviceManager: ObservableObject {
                     )
                 }
 
-                await MainActor.run {
+                                await MainActor.run {
                     isMounting = .success
+                }
+
+                // Cryptex/DDI install can leave the existing RSD adapter stale
+                // for debug services. Rebuild so Apps launch works without
+                // manually pressing Restart Tunnel.
+                await MainActor.run {
+                    self.stopTunnel()
+                }
+                do {
+                    try await self.setupTunnel()
+                } catch {
+                    await MainActor.run {
+                        self.isMounted = .failure(issue: "Mounted, but tunnel rebuild failed: \(error.localizedDescription)")
+                    }
+                    return
                 }
 
                 runCheckMounted()
@@ -156,8 +171,13 @@ final class DeviceManager: ObservableObject {
             }
         }
     }
-        func setupTunnel() async throws {
-            let newPairing: RpPairingFileHandle? = try await runBlocking { [self] in
+            func setupTunnel() async throws {
+        // Always dispose of any existing tunnel before creating a new one
+        await MainActor.run {
+            self.stopTunnel()
+        }
+
+        let newPairing: RpPairingFileHandle? = try await runBlocking { [self] in
             let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
             idevice_init_logger(Debug, Debug, string)
             defer { free(string) }
