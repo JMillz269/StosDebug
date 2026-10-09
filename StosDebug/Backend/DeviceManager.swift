@@ -215,10 +215,28 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-    private func clearTunnelHandles() {
-        adapter = nil
-        handshake = nil
-        pairing = nil
+        /// Stops the RSD tunnel and frees all native handles.
+    @MainActor
+    func stopTunnel() {
+        tunnelRebuildTask?.cancel()
+        tunnelRebuildTask = nil
+        tunnelHealthTask?.cancel()
+        tunnelHealthTask = nil
+
+        if let adapter {
+            _ = adapter_close(adapter)
+            adapter_free(adapter)
+        }
+        if let handshake {
+            rsd_handshake_free(handshake)
+        }
+        if let pairing {
+            rp_pairing_file_free(pairing)
+        }
+
+        self.adapter = nil
+        self.handshake = nil
+        self.pairing = nil
     }
 
     @MainActor
@@ -242,7 +260,7 @@ final class DeviceManager: ObservableObject {
 
             guard needsRebuild else { return }
 
-            self.clearTunnelHandles()
+            self.stopTunnel()
 
             do {
                 try await self.setupTunnel()
@@ -805,12 +823,16 @@ let appsArray = appsPointer.assumingMemoryBound(to: plist_t?.self)
         }
     }
     
-    func runUnmountDDI() {
+        func runUnmountDDI() {
         Task {
             do {
                 try await unmountDDI()
 
+                // Optional but recommended: wipe cached DDI files from Documents/DDI
+                deleteLocalDDIFiles()
+
                 await MainActor.run {
+                    self.stopTunnel()
                     self.isMounted = .notMounted
                     self.isMounting = .none
                 }
