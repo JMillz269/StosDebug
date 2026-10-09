@@ -362,24 +362,26 @@ final class DeviceManager: ObservableObject {
         defer { endDebugSession() }
 
         // ---- Keep-alive for the whole session ----
-        var bgTask: UIBackgroundTaskIdentifier = .invalid
-        if useScript {
-            let startKeepAlive = {
-                bgTask = UIApplication.shared.beginBackgroundTask(withName: "StosDebugSession") {
-                    UIApplication.shared.endBackgroundTask(bgTask)
-                    bgTask = .invalid
-                }
-                BackgroundLocationManager.shared.start()
-                BackgroundAudioManager.shared.start()
-                print("[Session] Background task and keep-alive started")
-            }
-
-            if Thread.isMainThread {
-                startKeepAlive()
-            } else {
-                DispatchQueue.main.async(execute: startKeepAlive)
-            }
+    var bgTask: UIBackgroundTaskIdentifier = .invalid
+    if useScript {
+    let startKeepAlive = {
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "StosDebugSession") {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
         }
+        BackgroundLocationManager.shared.start()
+        BackgroundAudioManager.shared.start()
+        print("[Session] Background task and keep-alive started")
+    }
+
+    // Must finish on main before the rest of the session runs,
+    // or stop can race ahead of start.
+    if Thread.isMainThread {
+        startKeepAlive()
+    } else {
+        DispatchQueue.main.sync(execute: startKeepAlive)
+    }
+}
         defer {
             if useScript {
                 DispatchQueue.main.async {
