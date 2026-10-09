@@ -348,7 +348,7 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-    func startDebugApp(
+        nonisolated func startDebugApp(
         bundleID: String? = nil,
         pid: Int? = nil,
         forcePID: Bool = false,
@@ -501,19 +501,26 @@ defer {
 
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
-                DispatchQueue.main.async { [weak self] in
-                    self?.jsViewModel = viewModel
-                    whenJSCreated?(viewModel)
-                        }
+// Publish UI on main before the blocking wait so the sheet can appear
+if Thread.isMainThread {
+    self.jsViewModel = viewModel
+    whenJSCreated?(viewModel)
+} else {
+    DispatchQueue.main.sync {
+        self.jsViewModel = viewModel
+        whenJSCreated?(viewModel)
+    }
+}
 
-            guard let scriptData = script.scriptData else {
-                Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
-                return 3
-            }
+guard let scriptData = script.scriptData else {
+    Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
+    return 3
+}
 
-            viewModel.runScript(data: scriptData, name: script.scriptName)
-            
-            let waitResult = semaphore.wait(timeout: .now() + 30)
+viewModel.runScript(data: scriptData, name: script.scriptName)
+
+// This must never run on the main thread (nonisolated + Task.detached call sites)
+let waitResult = semaphore.wait(timeout: .now() + 30)
             if waitResult == .timedOut {
                 Alert.showSyncAlert(
                     title: "Script Timeout",
