@@ -253,21 +253,23 @@ struct AppView: View {
     }
 
             private func startTunnel() {
-                isLoadingApps = true
-                Task {
-                    await deviceManager.ensureTunnelReady()
-                    deviceManager.runCheckMounted(mountIfNeeded: true)
-                    let result = try? await DeviceManager.shared.listApps()
-            
-                    let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
-                    let newHash = newApps.map(\.bundleIdentifier).joined().hashValue
-                    let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
-                    if newHash != oldHash {
-                        self.apps = newApps
-                    }
-                    isLoadingApps = false
-                }
+    isLoadingApps = true
+    Task {
+        await deviceManager.ensureTunnelReady()
+        deviceManager.runCheckMounted(mountIfNeeded: true)
+        let result = try? await DeviceManager.shared.listApps()
+
+        let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
+        let newHash = newApps.map(\.bundleIdentifier).joined().hashValue
+
+        await MainActor.run {
+            let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
+            if newHash != oldHash {
+                self.apps = newApps
             }
+            self.isLoadingApps = false
+        }
+    }
 }
 
 struct SettingsView: View {
