@@ -294,10 +294,10 @@ final class DeviceManager: ObservableObject {
         await task.value
     }
 
-    private func tunnelHealthCheck(timeout: TimeInterval) async -> Bool {
+        private func tunnelHealthCheck(timeout: TimeInterval) async -> Bool {
         await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                (try? await self.isMounted()) != nil
+                await self.probeTunnelAlive()
             }
             group.addTask {
                 try? await Task.sleep(for: .seconds(timeout))
@@ -306,6 +306,45 @@ final class DeviceManager: ObservableObject {
             let first = await group.next() ?? false
             group.cancelAll()
             return first
+        }
+    }
+
+    /// Probes the same RSD services used by app launch.
+    /// `isMounted()` alone is not enough: after Cryptex/DDI install those
+    /// can still answer while remote_server / debug_proxy are dead.
+    private func probeTunnelAlive() async -> Bool {
+        guard let (adapter, handshake) = await currentHandles() else {
+            return false
+        }
+
+        do {
+            return try await runBlocking {
+                var remoteServer: RemoteServerHandle?
+                if remote_server_connect_rsd(adapter, handshake, &remoteServer) != nil {
+                    if let remoteServer {
+                        remote_server_free(remoteServer)
+                    }
+                    return false
+                }
+                if let remoteServer {
+                    remote_server_free(remoteServer)
+                }
+
+                var debugProxy: DebugProxyHandle?
+                if debug_proxy_connect_rsd(adapter, handshake, &debugProxy) != nil {
+                    if let debugProxy {
+                        debug_proxy_free(debugProxy)
+                    }
+                    return false
+                }
+                if let debugProxy {
+                    debug_proxy_free(debugProxy)
+                }
+
+                return true
+            }
+        } catch {
+            return false
         }
     }
 
