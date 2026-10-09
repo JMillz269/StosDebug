@@ -508,7 +508,6 @@ defer {
 
             guard let scriptData = script.scriptData else {
                 Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
-                debug_proxy_free(debugProxy)
                 return 3
             }
 
