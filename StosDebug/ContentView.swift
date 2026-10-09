@@ -11,7 +11,11 @@ import UIKit
 import CoreLocation
 
 struct ContentView: View {
-    @State var showingScript: Bool = false
+    @State var showingScript: Bool = fals
+    
+    
+    
+    e
     @StateObject var deviceManager: DeviceManager = .shared
 
     var body: some View {
@@ -317,31 +321,51 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
-                    Task.detached(priority: .userInitiated) {
-                        do {
-                            try await deviceManager.setupTunnel()
-                        } catch {
-                            _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
+                    if deviceManager.isMounted == .success {
+                        Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
+                            Task.detached(priority: .userInitiated) {
+                                do {
+                                    try await deviceManager.setupTunnel()
+                                } catch {
+                                    _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
+                                }
+                            }
                         }
                     }
-                }
-                .disabled(deviceManager.adapter == nil && deviceManager.isMounting == .loading)
-
-                if deviceManager.isMounted != .success && deviceManager.isMounting != .loading {
-                    HStack {
-                        Button("Mount DDI") {
-                            deviceManager.runMountDDI()
+                    
+                    if deviceManager.isMounted != .success && deviceManager.isMounting != .loading {
+                        HStack {
+                            Button("Mount DDI & Start Tunnel") {
+                                deviceManager.runMountDDI()
+                            }
+                    
+                            if deviceManager.isMounted.isFailure {
+                                Spacer()
+                    
+                                Button {
+                                    Alert.showSyncAlert(
+                                        title: "DDI failed to mount",
+                                        message: deviceManager.isMounted.failureReason ?? "Unknown error",
+                                        hasCancel: false
+                                    ) { _ in }
+                                } label: {
+                                    Image(systemName: "questionmark.circle")
+                                }
+                            }
                         }
-
-                        if deviceManager.isMounted.isFailure {
+                    } else if deviceManager.isMounting == .loading {
+                        Text("DDI is currently mounting...")
+                    } else if deviceManager.isMounted == .success {
+                        HStack {
+                            Button("Mount DDI & Start Tunnel") {}
+                                .disabled(true)
+                    
                             Spacer()
-
+                    
                             Button {
                                 Alert.showSyncAlert(
-                                    title: "DDI failed to mount",
-                                    message: deviceManager.isMounted.failureReason ?? "Unknown error",
+                                    title: "DDI is already mounted",
+                                    message: "The Developer Disk Image is already mounted.",
                                     hasCancel: false
                                 ) { _ in }
                             } label: {
@@ -349,26 +373,6 @@ struct SettingsView: View {
                             }
                         }
                     }
-                } else if deviceManager.isMounting == .loading {
-                    Text("DDI is currently mounting...")
-                } else {
-                    HStack {
-                        Button("Mount DDI") {}
-                            .disabled(true)
-
-                        Spacer()
-
-                        Button {
-                            Alert.showSyncAlert(
-                                title: "DDI is already mounted",
-                                message: "The Developer Disk Image is already mounted.",
-                                hasCancel: false
-                            ) { _ in }
-                        } label: {
-                            Image(systemName: "questionmark.circle")
-                        }
-                    }
-                }
 
                 if deviceManager.isMounted == .success {
                     Button("Unmount DDI") {
