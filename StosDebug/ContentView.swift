@@ -271,6 +271,7 @@ struct AppView: View {
         }
     }
 }
+}
 
 struct SettingsView: View {
     @AppStorage("forceTXM") var forceTXM = false
