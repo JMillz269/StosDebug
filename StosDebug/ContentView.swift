@@ -11,11 +11,7 @@ import UIKit
 import CoreLocation
 
 struct ContentView: View {
-    @State var showingScript: Bool = fals
-    
-    
-    
-    e
+    @State var showingScript: Bool = false
     @StateObject var deviceManager: DeviceManager = .shared
 
     var body: some View {
