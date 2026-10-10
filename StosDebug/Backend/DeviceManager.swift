@@ -504,17 +504,18 @@ defer {
             let viewModel = RunJSViewModel(pid: Int(finalPID), debugProxy: debugProxy, remoteServer: remoteServer, semaphore: semaphore)
 
 // Publish UI on main before the blocking wait so the sheet can appear
-if Thread.isMainThread {
+
+    if Thread.isMainThread {
     self.jsViewModel = viewModel
     whenJSCreated?(viewModel)
-} else {
+    } else {
     DispatchQueue.main.sync {
         self.jsViewModel = viewModel
         whenJSCreated?(viewModel)
     }
 }
 
-guard let scriptData = script.scriptData else {
+    guard let scriptData = script.scriptData else {
     Alert.showSyncAlert(title: "Missing Script Data", message: "Unable to get the Script Data", alertHandler: { _ in })
     return 3
 }
