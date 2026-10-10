@@ -404,18 +404,18 @@ final class DeviceManager: ObservableObject {
         var err: UnsafeMutablePointer<IdeviceFfiError>?
 
         var remoteServer: RemoteServerHandle?
-        err = remote_server_connect_rsd(adapter, handshake, &remoteServer)
+err = remote_server_connect_rsd(adapter, handshake, &remoteServer)
 
-        if let err {
-            print("Remote server failed: \(err.pointee.message.string)")
-            return 1
-        }
+if let err {
+    print("Remote server failed: \(err.pointee.message.string)")
+    return 1
+}
 
-        var debugProxy: DebugProxyHandle?
-        err = debug_proxy_connect_rsd(adapter, handshake, &debugProxy)
+var debugProxy: DebugProxyHandle?
+err = debug_proxy_connect_rsd(adapter, handshake, &debugProxy)
 
-        if let err {
-        print("Debug proxy failed: \(err.pointee.message.string)")
+if let err {
+    print("Debug proxy failed: \(err.pointee.message.string)")
     if let remoteServer {
         remote_server_free(remoteServer)
     }
