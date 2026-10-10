@@ -172,38 +172,38 @@ final class DeviceManager: ObservableObject {
         }
     }
             func setupTunnel() async throws {
-        // Always dispose of any existing tunnel before creating a new one
-        await MainActor.run {
-            self.stopTunnel()
-        }
+    // Always dispose of any existing tunnel before creating a new one
+    await MainActor.run {
+        self.stopTunnel()
+    }
 
-        let newPairing: RpPairingFileHandle? = try await runBlocking { [self] in
-            let string = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
-            idevice_init_logger(Debug, Debug, string)
-            defer { free(string) }
+    // Do the entire read + tunnel creation under one blocking call so the
+    // pairing handle never escapes the FFI queue while it is in use.
+    let (newAdapter, newHandshake, newPairing): (AdapterHandle?, RsdHandshakeHandle?, RpPairingFileHandle?) =
+        try await runBlocking { [self] in
+            let logPath = strdup(URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path)
+            defer { free(logPath) }
+            idevice_init_logger(Debug, Debug, logPath)
 
             var pairingHandle: RpPairingFileHandle?
-            let err = rp_pairing_file_read(self.pairingFileURL.path, &pairingHandle)
-            if let err {
-                throw "Pairing read failed: \(err.pointee.code) \(err.pointee.message.string)"
+            let readErr = rp_pairing_file_read(self.pairingFileURL.path, &pairingHandle)
+            if let readErr {
+                throw "Pairing read failed: \(readErr.pointee.code) \(readErr.pointee.message.string)"
             }
-            return pairingHandle
-        }
+            guard let pairingHandle else {
+                throw "Pairing read returned nil handle"
+            }
 
-        pairing = newPairing
+            var addr = sockaddr_in()
+            memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = CFSwapInt16HostToBig(49152)
 
-        var addr = sockaddr_in()
-        memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
+            guard inet_pton(AF_INET, "10.7.0.1", &addr.sin_addr) == 1 else {
+                rp_pairing_file_free(pairingHandle)
+                throw "Invalid IP (shouldn't be possible)"
+            }
 
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = CFSwapInt16HostToBig(49152)
-
-        guard inet_pton(AF_INET, "10.7.0.1", &addr.sin_addr) == 1 else {
-            throw "Invalid IP (shouldn't be possible)"
-        }
-
-        let pairing = pairing
-        let (newAdapter, newHandshake): (AdapterHandle?, RsdHandshakeHandle?) = try await runBlocking {
             var createdAdapter: AdapterHandle?
             var createdHandshake: RsdHandshakeHandle?
 
@@ -213,7 +213,7 @@ final class DeviceManager: ObservableObject {
                         ptr,
                         socklen_t(MemoryLayout<sockaddr_in>.size),
                         "StosDebug",
-                        pairing,
+                        pairingHandle,          // borrowed for the duration of this call
                         nil,
                         nil,
                         &createdAdapter,
@@ -223,41 +223,45 @@ final class DeviceManager: ObservableObject {
             }
 
             if let result {
+                rp_pairing_file_free(pairingHandle)
                 throw "Tunnel creation failed: \(result.pointee.code) \(result.pointee.message.string)"
             }
 
-            return (createdAdapter, createdHandshake)
+            // Success – hand the live handles back. Ownership of the pairing
+            // handle transfers to the instance only after the FFI call finished.
+            return (createdAdapter, createdHandshake, pairingHandle)
         }
 
-        await MainActor.run {
-            self.adapter = newAdapter
-            self.handshake = newHandshake
-        }
+    await MainActor.run {
+        self.adapter = newAdapter
+        self.handshake = newHandshake
+        self.pairing = newPairing
     }
+}
 
         /// Stops the RSD tunnel and frees all native handles.
     @MainActor
-    func stopTunnel() {
-        tunnelRebuildTask?.cancel()
-        tunnelRebuildTask = nil
-        tunnelHealthTask?.cancel()
-        tunnelHealthTask = nil
+func stopTunnel() {
+    tunnelRebuildTask?.cancel()
+    tunnelRebuildTask = nil
+    tunnelHealthTask?.cancel()
+    tunnelHealthTask = nil
 
-        if let adapter {
-            _ = adapter_close(adapter)
-            adapter_free(adapter)
-        }
-        if let handshake {
-            rsd_handshake_free(handshake)
-        }
-        if let pairing {
-            rp_pairing_file_free(pairing)
-        }
-
-        self.adapter = nil
-        self.handshake = nil
-        self.pairing = nil
+    if let adapter {
+        _ = adapter_close(adapter)
+        adapter_free(adapter)
     }
+    if let handshake {
+        rsd_handshake_free(handshake)
+    }
+    if let pairing {
+        rp_pairing_file_free(pairing)
+    }
+
+    self.adapter = nil
+    self.handshake = nil
+    self.pairing = nil
+}
 
     @MainActor
     func ensureTunnelReady() async {
