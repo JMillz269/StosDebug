@@ -1,6 +1,6 @@
 //
 //  RunJSView.swift
-//  StikJIT
+//  
 //
 //  Created by s s on 2025/4/24.
 //
@@ -19,6 +19,8 @@ final class RunJSViewModel: ObservableObject {
     var remoteServer: OpaquePointer?
     var semaphore: dispatch_semaphore_t?
     
+    private var didSignalSemaphore = false
+    
     init(pid: Int, debugProxy: OpaquePointer?, remoteServer: OpaquePointer?, semaphore: dispatch_semaphore_t?) {
         self.pid = pid
         self.debugProxy = debugProxy
@@ -27,36 +29,45 @@ final class RunJSViewModel: ObservableObject {
     }
     
     func runScript(data: Data, name: String? = nil) {
-        let scriptContent = String(data: data, encoding: .utf8)
+        let scriptContent = String(data: data, encoding: .utf8) ?? ""
         let resolvedName = name ?? "Script"
         DispatchQueue.main.async { self.scriptName = resolvedName }
         
-        let getPidFunction: @convention(block) () -> Int = {
-            return self.pid
+        let getPidFunction: @convention(block) () -> Int = { [weak self] in
+            return self?.pid ?? -1
         }
         
-        let sendCommandFunction: @convention(block) (String?) -> String? = { commandStr in
+        let sendCommandFunction: @convention(block) (String?) -> String? = { [weak self] commandStr in
+            guard let self else { return "" }
+            
             guard let commandStr else {
-                self.context?.exception = JSValue(object: "Command should not be nil.", in: self.context!)
-                return ""
-            }
-            if self.executionInterrupted {
-                self.context?.exception = JSValue(object: "Script execution is interrupted by StikDebug.", in: self.context!)
+                if let ctx = self.context {
+                    ctx.exception = JSValue(object: "Command should not be nil.", in: ctx)
+                }
                 return ""
             }
             
-            return handleJSContextSendDebugCommand(context: self.context!, commandStr: commandStr, debugProxy: self.debugProxy) ?? ""
+            if self.executionInterrupted {
+                if let ctx = self.context {
+                    ctx.exception = JSValue(object: "Script execution is interrupted by StikDebug.", in: ctx)
+                }
+                return ""
+            }
+            
+            guard let ctx = self.context else { return "" }
+            return handleJSContextSendDebugCommand(context: ctx, commandStr: commandStr, debugProxy: self.debugProxy) ?? ""
         }
         
-        let logFunction: @convention(block) (String) -> Void = { logStr in
+        let logFunction: @convention(block) (String) -> Void = { [weak self] logStr in
+            guard let self else { return }
             DispatchQueue.main.async {
                 self.logs.append(logStr)
             }
         }
         
-        
-        let prepareMemoryRegionFunction: @convention(block) (UInt64, UInt64) -> String = { startAddr, regionSize in
-            return handleJITPageWrite(context: self.context!, startAddr: startAddr, JITPagesSize: regionSize, debugProxy: self.debugProxy) ?? ""
+        let prepareMemoryRegionFunction: @convention(block) (UInt64, UInt64) -> String = { [weak self] startAddr, regionSize in
+            guard let self, let ctx = self.context else { return "" }
+            return handleJITPageWrite(context: ctx, startAddr: startAddr, JITPagesSize: regionSize, debugProxy: self.debugProxy) ?? ""
         }
         
         context = JSContext()
@@ -65,12 +76,9 @@ final class RunJSViewModel: ObservableObject {
         context?.setObject(prepareMemoryRegionFunction, forKeyedSubscript: "prepare_memory_region" as NSString)
         context?.setObject(logFunction, forKeyedSubscript: "log" as NSString)
         
-        
         context?.evaluateScript(scriptContent)
-        if let semaphore {
-            semaphore.signal()
-        }
-
+        signalIfNeeded()
+        
         DispatchQueue.main.async {
             if let exception = self.context?.exception {
                 self.logs.append(exception.debugDescription)
@@ -80,7 +88,12 @@ final class RunJSViewModel: ObservableObject {
         }
     }
     
-
+    private func signalIfNeeded() {
+        guard !didSignalSemaphore else { return }
+        didSignalSemaphore = true
+        semaphore?.signal()
+    }
+    
     private func screenshotFileURL(preferredName: String?) throws -> URL {
         let directory = URL.documentsDirectory.appendingPathComponent("screenshots", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -90,53 +103,29 @@ final class RunJSViewModel: ObservableObject {
         guard fileManager.fileExists(atPath: targetURL.path) else {
             return targetURL
         }
-        
-        let baseName = targetURL.deletingPathExtension().lastPathComponent
-        let ext = targetURL.pathExtension.isEmpty ? "png" : targetURL.pathExtension
+
+        let ext = targetURL.pathExtension
+        let base = targetURL.deletingPathExtension().lastPathComponent
         var counter = 1
-        repeat {
-            let candidate = "\(baseName)-\(counter).\(ext)"
-            targetURL = directory.appendingPathComponent(candidate)
+        while fileManager.fileExists(atPath: targetURL.path) {
+            let candidate = "\(base)-\(counter)"
+            targetURL = directory.appendingPathComponent(candidate).appendingPathExtension(ext)
             counter += 1
-        } while fileManager.fileExists(atPath: targetURL.path)
+        }
         return targetURL
     }
-    
+
     private func sanitizedScreenshotName(from preferredName: String?) -> String {
-        let defaultName = "screenshot-\(Int(Date().timeIntervalSince1970))"
-        guard var candidate = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !candidate.isEmpty else {
-            return "\(defaultName).png"
+        let fallback = "screenshot-\(Int(Date().timeIntervalSince1970)).png"
+        guard let preferredName, !preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return fallback
         }
-        
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
-        var sanitized = ""
-        sanitized.reserveCapacity(candidate.count)
-        for scalar in candidate.unicodeScalars {
-            if allowed.contains(scalar) {
-                sanitized.append(Character(scalar))
-            } else {
-                sanitized.append("_")
-            }
-        }
-        if sanitized.isEmpty {
-            sanitized = defaultName
-        }
-        if !sanitized.lowercased().hasSuffix(".png") {
-            sanitized += ".png"
-        }
-        return sanitized
-    }
-    
-    private func describeIdeviceError(_ error: UnsafeMutablePointer<IdeviceFfiError>) -> String {
-        if let messagePointer = error.pointee.message {
-            return "[\(error.pointee.code)] \(String(cString: messagePointer))"
-        }
-        return "[\(error.pointee.code)] Unknown error"
-    }
-    
-    private func raiseException(_ message: String) {
-        guard let context else { return }
-        context.exception = JSValue(object: message, in: context)
+        let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+        let clean = preferredName
+            .components(separatedBy: invalid)
+            .joined(separator: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty { return fallback }
+        return clean.hasSuffix(".png") ? clean : "\(clean).png"
     }
 }

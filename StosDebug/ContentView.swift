@@ -10,21 +10,19 @@ import UniformTypeIdentifiers
 import UIKit
 import CoreLocation
 
-
 struct ContentView: View {
     @State var showingScript: Bool = false
     @StateObject var deviceManager: DeviceManager = .shared
-    
+
     var body: some View {
         TabView {
             Tab("Apps", systemImage: "square.stack.3d.up") {
                 AppView(showingScript: $showingScript, isMounted: $deviceManager.isMounted)
             }
-    
+
             Tab("Settings", systemImage: "gear") {
                 SettingsView(deviceManager: deviceManager)
             }
-    
         }
         .onAppear {
             if ProcessInfo.processInfo.hasTXM {
@@ -32,45 +30,42 @@ struct ContentView: View {
             }
         }
         .onOpenURL { url in
-    let host = url.host?.lowercased()
+            let host = url.host?.lowercased()
 
-    switch host {
-    case "enableJIT".lowercased(), "enable-jit":
-        Thread.detachNewThread {
-            while deviceManager.adapter == nil {
-                try? Thread.sleep(forTimeInterval: 0.05)
-            }
-
-            try? Thread.sleep(forTimeInterval: 0.05)
-
+            switch host {
+            case "enableJIT".lowercased(), "enable-jit":
+                Task.detached(priority: .userInitiated) {
+                await deviceManager.ensureTunnelReady()
+    
+            // Replaces Thread.sleep(forTimeInterval: 0.05)
+            try? await Task.sleep(nanoseconds: 50_000_000)
+    
             let decoder = URLQueryDecoder()
-
-            guard var params = try? decoder.decode(EnableJIT.self, from: url) else {
+    
+            guard let params = try? decoder.decode(EnableJIT.self, from: url) else {
                 print("unable to decode")
                 return
             }
-
+    
             let scheme = url.scheme?.lowercased() ?? ""
-            let isStikDebug = scheme == "stikdebug"
             let isStosDebug = scheme == "stosdebug"
-
+    
             if isStosDebug, (params.appName?.isEmpty ?? true) {
                 print("unable to decode: appName is required for stosdebug:// URLs")
                 return
             }
-
+    
             var shouldLaunchApp: Bool = false
             if params.pid != nil {
                 shouldLaunchApp = params.relaunchApp ?? true
             }
-
+    
             let launchApp = shouldLaunchApp
             let bundleId = params.bundleId
             let pid = params.pid
             let forcePID = params.forcePID ?? false
-
+    
             if ProcessInfo.processInfo.hasTXM {
-                // Base64 script wins; otherwise pick by appName; otherwise Universal.
                 let script: Scripts
                 if let data = params.scriptData {
                     let name = (params.appName?.isEmpty == false ? params.appName! : bundleId)
@@ -83,7 +78,7 @@ struct ContentView: View {
                 } else {
                     script = .universal
                 }
-
+    
                 _ = deviceManager.startDebugApp(
                     bundleID: bundleId,
                     pid: pid,
@@ -104,30 +99,30 @@ struct ContentView: View {
             }
         }
 
-    default:
-        break
-    }
-}
+            default:
+                break
+            }
+        }
     }
 }
 
 struct TextDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.plainText] }
-    
+
     var text: String
-    
+
     init(text: String = "") {
         self.text = text
     }
-    
+
     init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents,
-                let string = String(data: data, encoding: .utf8) else {
+              let string = String(data: data, encoding: .utf8) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         self.text = string
     }
- 
+
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let data = text.data(using: .utf8)!
         return FileWrapper(regularFileWithContents: data)
@@ -141,12 +136,12 @@ struct AppView: View {
     @State var apps: [SideApp] = []
     @State var logs: [String] = []
     @Binding var showingScript: Bool
-    @Binding var isMounted: DeviceError  // Updated to DeviceError
+    @Binding var isMounted: DeviceError
     @State private var mountTask: Task<Void, Never>?
     @State private var isLoadingApps: Bool = false
-    
+
     let deviceManager = DeviceManager.shared
-    
+
     var body: some View {
         VStack {
             ScrollView {
@@ -156,26 +151,36 @@ struct AppView: View {
                             .padding()
                             .onTapGesture {
                                 if deviceManager.isMounted != .success {
-                                    Alert.showSyncAlert(title: "DDI is not mounted", message: "Please go into settings and mount the Developer Disk Image.", actions: []) { _ in }
+                                    Alert.showSyncAlert(
+                                        title: "DDI is not mounted",
+                                        message: "Please go into settings and mount the Developer Disk Image.",
+                                        actions: []
+                                    ) { _ in }
                                     return
                                 }
                                 
-                                Thread.detachNewThread {
+                                let app = apps[index]
+                                Task.detached(priority: .userInitiated) {
+                                    await deviceManager.ensureTunnelReady()
+                                
                                     if ProcessInfo.processInfo.hasTXM {
-                                        let script = Scripts.getScriptFromName(apps[index].name)
-                                        
-                                        _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier, useScript: true, script: script) { viewModel in
+                                        let script = Scripts.getScriptFromName(app.name)
+                                
+                                        _ = deviceManager.startDebugApp(
+                                            bundleID: app.bundleIdentifier,
+                                            useScript: true,
+                                            script: script
+                                        ) { _ in
                                             DispatchQueue.main.async {
                                                 showingScript = true
                                             }
                                         }
-                                        
                                     } else {
-                                        _ = deviceManager.startDebugApp(bundleID: apps[index].bundleIdentifier)
+                                        _ = deviceManager.startDebugApp(bundleID: app.bundleIdentifier)
                                     }
                                 }
                             }
-                        
+
                         if index != apps.count - 1 {
                             Divider()
                         }
@@ -221,20 +226,23 @@ struct AppView: View {
                     case .success(let urls):
                         let url = urls.first!
                         let securityScoped = url.startAccessingSecurityScopedResource()
-                        defer { if securityScoped {  url.stopAccessingSecurityScopedResource() }}
-                        
+                        defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
+
                         let pairingURL = deviceManager.pairingFileURL
-                        
+
                         if FileManager.default.fileExists(atPath: pairingURL.path) {
                             try? FileManager.default.removeItem(at: pairingURL)
                         }
-                        
+
                         do {
                             try FileManager.default.copyItem(at: url, to: pairingURL)
                         } catch {
-                            Alert.showSyncAlert(title: "Failed to copy pairing file", message: error.localizedDescription) { _ in }
+                            Alert.showSyncAlert(
+                                title: "Failed to copy pairing file",
+                                message: error.localizedDescription
+                            ) { _ in }
                         }
-                        
+
                         startTunnel()
                     case .failure:
                         break
@@ -243,42 +251,35 @@ struct AppView: View {
             }
         }
     }
-    
-    private func startTunnel() {
-        isLoadingApps = true
-        Task.detached(priority: .userInitiated) {
-            do {
-                try await deviceManager.setupTunnel()
-                await deviceManager.runCheckMounted(mountIfNeeded: true)
-                let result = try? await DeviceManager.shared.listApps()
-                await MainActor.run {
-                    let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
-                    let newHash = newApps.map(\.bundleIdentifier).joined().hashValue
-                    let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
-                    if newHash != oldHash {
-                        self.apps = newApps
-                    }
-                    isLoadingApps = false
-                }
-            } catch {
-                await MainActor.run {
-                    isLoadingApps = false
-                    deviceManager.isMounted = .failure(issue: error.localizedDescription)
-                }
+
+            private func startTunnel() {
+    isLoadingApps = true
+    Task {
+        await deviceManager.ensureTunnelReady()
+        deviceManager.runCheckMounted(mountIfNeeded: true)
+        let result = try? await DeviceManager.shared.listApps()
+
+        let newApps = (result ?? []).sorted { $0.bundleIdentifier < $1.bundleIdentifier }
+        let newHash = newApps.map(\.bundleIdentifier).joined().hashValue
+
+        await MainActor.run {
+            let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
+            if newHash != oldHash {
+                self.apps = newApps
             }
+            self.isLoadingApps = false
         }
     }
-    
+}
 }
 
 struct SettingsView: View {
-
     @AppStorage("forceTXM") var forceTXM = false
     @AppStorage("keepAliveLocation") var keepAliveLocation = true
     @AppStorage("keepAliveAudio") var keepAliveAudio = true
     @ObservedObject var deviceManager: DeviceManager
     let pairingURL = DeviceManager.shared.pairingFileURL
-    
+
     var body: some View {
         List {
             Section {
@@ -288,19 +289,21 @@ struct SettingsView: View {
                         case .success(let urls):
                             let url = urls.first!
                             let securityScoped = url.startAccessingSecurityScopedResource()
-                            defer { if securityScoped {  url.stopAccessingSecurityScopedResource() }}
-                            
-                            
+                            defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
+
                             if FileManager.default.fileExists(atPath: pairingURL.path) {
                                 try? FileManager.default.removeItem(at: pairingURL)
                             }
-                            
+
                             do {
                                 try FileManager.default.copyItem(at: url, to: pairingURL)
                             } catch {
-                                Alert.showSyncAlert(title: "Failed to copy pairing file", message: error.localizedDescription) { _ in }
+                                Alert.showSyncAlert(
+                                    title: "Failed to copy pairing file",
+                                    message: error.localizedDescription
+                                ) { _ in }
                             }
-                            
+
                             Task.detached(priority: .userInitiated) {
                                 do {
                                     try await deviceManager.setupTunnel()
@@ -314,63 +317,65 @@ struct SettingsView: View {
                         }
                     }
                 }
-                
-                Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
-                    Task.detached(priority: .userInitiated) {
-                        do {
-                            try await deviceManager.setupTunnel()
-                        } catch {
-                            _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
+                    if deviceManager.isMounted == .success {
+                        Button("\(deviceManager.adapter == nil ? "Start" : "Restart") Tunnel") {
+                            Task.detached(priority: .userInitiated) {
+                                do {
+                                    try await deviceManager.setupTunnel()
+                                } catch {
+                                    _ = await Alert.showAlert(title: "Failed to start tunnel", message: error.localizedDescription)
+                                }
+                            }
                         }
                     }
-                }
-                .disabled(deviceManager.adapter == nil && deviceManager.isMounting == .loading)
-                
-                if deviceManager.isMounted != .success && deviceManager.isMounting != .loading {
-                    HStack {
-                        Button("Mount DDI") {
-                            deviceManager.runMountDDI()
+                    
+                    if deviceManager.isMounted != .success && deviceManager.isMounting != .loading {
+                        HStack {
+                            Button("Mount DDI & Start Tunnel") {
+                                deviceManager.runMountDDI()
+                            }
+                    
+                            if deviceManager.isMounted.isFailure {
+                                Spacer()
+                    
+                                Button {
+                                    Alert.showSyncAlert(
+                                        title: "DDI failed to mount",
+                                        message: deviceManager.isMounted.failureReason ?? "Unknown error",
+                                        hasCancel: false
+                                    ) { _ in }
+                                } label: {
+                                    Image(systemName: "questionmark.circle")
+                                }
+                            }
                         }
-                        
-                        if deviceManager.isMounted.isFailure {
+                    } else if deviceManager.isMounting == .loading {
+                        Text("DDI is currently mounting...")
+                    } else if deviceManager.isMounted == .success {
+                        HStack {
+                            Button("Mount DDI & Start Tunnel") {}
+                                .disabled(true)
+                    
                             Spacer()
-                            
+                    
                             Button {
-                                Alert.showSyncAlert(title: "DDI failed to mount", message:  deviceManager.isMounted.failureReason ?? "Unknown error", hasCancel: false) { _ in}
+                                Alert.showSyncAlert(
+                                    title: "DDI is already mounted",
+                                    message: "The Developer Disk Image is already mounted.",
+                                    hasCancel: false
+                                ) { _ in }
                             } label: {
                                 Image(systemName: "questionmark.circle")
                             }
                         }
                     }
-                    
-
-                } else if deviceManager.isMounting == .loading {
-                    Text("DDI is currently mounting...")
-                } else {
-    HStack {
-        Button("Mount DDI") {}
-            .disabled(true)
-
-        Spacer()
-
-        Button {
-            Alert.showSyncAlert(
-                title: "DDI is already mounted",
-                message: "The Developer Disk Image is already mounted.",
-                hasCancel: false
-            ) { _ in }
-        } label: {
-            Image(systemName: "questionmark.circle")
-        }
-    }
-}
 
                 if deviceManager.isMounted == .success {
                     Button("Unmount DDI") {
                         deviceManager.runUnmountDDI()
+                    }
                 }
-            }
-                
+
                 if !ProcessInfo.processInfo.detectedTXM {
                     Toggle("Force TXM", isOn: $forceTXM)
                 }
@@ -387,7 +392,7 @@ struct SettingsView: View {
                             BackgroundLocationManager.shared.stop()
                         }
                     }
-                
+
                 Toggle("Background Audio Keep-Alive", isOn: $keepAliveAudio)
                     .onChange(of: keepAliveAudio) { _, isOn in
                         if !isOn {
@@ -399,12 +404,6 @@ struct SettingsView: View {
             } footer: {
                 Text("Keeps StosDebug running in the background while a script is active. Location uses the background location indicator. Audio plays silence and may interrupt other audio apps' ducking. Turn both off only if you don't need background execution.")
             }
-            
-//            Section("TXM Debug") {
-//                Text("Detected TXM: \(ProcessInfo.processInfo.detectedTXM)")
-//                Text("Force TXM: \(forceTXM)")
-//                Text("Has TXM: \(ProcessInfo.processInfo.hasTXM)")
-//            }
         }
         .onAppear() {
             deviceManager.runCheckMounted(mountIfNeeded: true)
@@ -460,7 +459,7 @@ struct AppIcon: View {
 
 struct LogsView: View {
     @ObservedObject private var deviceManager = DeviceManager.shared
-    
+
     var body: some View {
         if let model = deviceManager.jsViewModel {
             LogsContent(model: model)
@@ -478,7 +477,7 @@ struct LogsView: View {
 private struct LogsContent: View {
     @ObservedObject var model: RunJSViewModel
     @State private var showScriptExport: Bool = false
-    
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -516,7 +515,6 @@ private struct LogsContent: View {
 struct AppListRow: View {
     let app: SideApp
 
-
     var body: some View {
         HStack {
             AppIcon(app: app)
@@ -524,15 +522,13 @@ struct AppListRow: View {
                 .aspectRatio(1, contentMode: .fill)
                 .padding(.leading)
                 .padding(.trailing, 8)
-            
-            
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(app.name)
                         .font(.headline)
                 }
-                
+
                 HStack(spacing: 4) {
                     Text(app.bundleIdentifier)
                         .font(.caption)
@@ -544,8 +540,6 @@ struct AppListRow: View {
             }
 
             Spacer()
-            
-
         }
         .shadow(radius: 10)
     }
