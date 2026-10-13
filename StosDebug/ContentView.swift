@@ -132,6 +132,7 @@ struct TextDocument: FileDocument {
 // Port is 49152 from what jackson said
 
 struct AppView: View {
+    @State private var vpnMissing: Bool = false
     @State var thread: Thread?
     @State var apps: [SideApp] = []
     @State var logs: [String] = []
@@ -187,35 +188,34 @@ struct AppView: View {
                     }
                 }
             }
-            .overlay(alignment: .center) {
-                if deviceManager.adapter == nil && !isLoadingApps {
-                    EmptyView()
-                } else if isLoadingApps && apps.isEmpty {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("Connecting…")
-                            .foregroundStyle(.secondary)
-                    }
-                } else if case .failure(let issue) = deviceManager.isMounted {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundStyle(.orange)
-                        Text(issue)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal)
-                        Button("Retry") { startTunnel() }
-                            .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
-                } else if apps.isEmpty {
-                    Text("No Apps")
+                .overlay(alignment: .center) {
+                    if vpnMissing {
+                        VStack(spacing: 12) {
+                            Image(systemName: "network.slash")
+                                .font(.largeTitle)
+                                .foregroundStyle(.orange)
+                            Text("LocalDevVPN is not enabled")
+                                .font(.headline)
+                            Text("Open LocalDevVPN, turn on the VPN, then come back and tap Retry.")
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal)
+                            Button("Retry") { startTunnel() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .padding()
+                    } else if deviceManager.adapter == nil && !isLoadingApps {
+                        EmptyView()
+                    } else if isLoadingApps && apps.isEmpty {
+                                    Text("No Apps")
                 }
             }
         }
         .sheet(isPresented: $showingScript) {
             LogsView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            if vpnMissing { startTunnel() }
         }
         .onAppear() {
             if FileManager.default.fileExists(atPath: deviceManager.pairingFileURL.path) {
@@ -252,7 +252,13 @@ struct AppView: View {
         }
     }
 
-            private func startTunnel() {
+private func startTunnel() {
+    guard DeviceManager.isLocalDevVPNActive() else {
+        vpnMissing = true
+        isLoadingApps = false
+        return
+    }
+    vpnMissing = false
     isLoadingApps = true
     Task {
         await deviceManager.ensureTunnelReady()
@@ -264,10 +270,12 @@ struct AppView: View {
 
         await MainActor.run {
             let oldHash = self.apps.map(\.bundleIdentifier).joined().hashValue
-            if newHash != oldHash {
-                self.apps = newApps
-            }
+            if newHash != oldHash { self.apps = newApps }
             self.isLoadingApps = false
+            // Fallback: tunnel failed even though the interface looked up
+            if self.apps.isEmpty && deviceManager.adapter == nil {
+                self.vpnMissing = true
+            }
         }
     }
 }
