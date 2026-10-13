@@ -83,28 +83,33 @@ final class DeviceManager: ObservableObject {
     private var tunnelRebuildTask: Task<Void, Never>?
     private let sessionLock = NSLock()
     private var activeSessionCount = 0
-
-        /// True if an interface (LocalDevVPN's utun) currently owns 10.7.0.1.
-    nonisolated static func isLocalDevVPNActive() -> Bool {
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return false }
-        defer { freeifaddrs(ifaddr) }
-
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            guard let sa = ptr.pointee.ifa_addr,
-                  sa.pointee.sa_family == UInt8(AF_INET) else { continue }
-
-            let name = String(cString: ptr.pointee.ifa_name)
-            guard name.hasPrefix("utun") else { continue }
-
-            let ip = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
-            var addr = ip
-            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-            inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN))
-            if String(cString: buf) == "10.7.0.1" { return true }
-        }
-        return false
-    }
+            /// True if LocalDevVPN appears to be active on a utun interface.
+            nonisolated static func isLocalDevVPNActive() -> Bool {
+                var ifaddr: UnsafeMutablePointer<ifaddrs>?
+                guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return false }
+                defer { freeifaddrs(ifaddr) }
+            
+                let allowedIPs: Set<String> = ["10.7.1.1", "10.7.0.1"]
+            
+                for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                    guard let sa = ptr.pointee.ifa_addr,
+                          sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+            
+                    let name = String(cString: ptr.pointee.ifa_name)
+                    guard name.hasPrefix("utun") else { continue }
+            
+                    let ip = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+                    var addr = ip
+                    var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                    inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN))
+            
+                    if allowedIPs.contains(String(cString: buf)) {
+                        return true
+                    }
+                }
+            
+                return false
+            }
     
     // GCD queue for blocking FFI calls to avoid starving the Swift cooperative pool
     private let ffiQueue = DispatchQueue(label: "stosdebug.ffi", qos: .userInitiated)
