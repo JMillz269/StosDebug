@@ -46,13 +46,12 @@ struct Scripts: Equatable {
         case amethyst
         case utm
         case dolphin
-        case flycast
         case geode
         case other
         
         var script: Scripts {
             switch self {
-            case .utm, .dolphin, .flycast:
+            case .utm, .dolphin:
                 return .classic
             case .geode:
                 return .classic_geode
