@@ -1,76 +1,66 @@
 import Foundation
+import Metal
+
+private enum ChipSeries { case a, m }
+private struct ChipInfo { let series: ChipSeries; let number: Int }
+
+private let txmFirmware = "usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4"
+
+private extension FileManager {
+    /// First entry in `path` whose name is exactly `nameLength` characters long.
+    func firstEntry(atPath path: String, nameLength: Int) -> String? {
+        guard let name = try? contentsOfDirectory(atPath: path)
+            .first(where: { $0.count == nameLength }) else { return nil }
+        return "\(path)/\(name)"
+    }
+}
 
 public extension ProcessInfo {
 
-    var detectedTXM: Bool {
-        let hardware = hardwareIdentifier()
+    /// iOS 26.0–26.5: the TXM firmware image exists in Preboot.
+    var hasTXMClassic: Bool {
+        if isiOSAppOnMac { return false }
+        let fm = FileManager.default
 
-        if #available(iOS 27.0, *) {
-            return hardware != "iPad8,11" &&
-                   hardware != "iPad8,12"
+        if let uuid = fm.firstEntry(atPath: "/System/Volumes/Preboot", nameLength: 36),
+           let boot = fm.firstEntry(atPath: "\(uuid)/boot", nameLength: 96) {
+            return access("\(boot)/\(txmFirmware)", F_OK) == 0
         }
-
-        if #available(iOS 26.0, *) {
-            guard let version = deviceVersion(from: hardware) else {
-                return false
-            }
-
-            if hardware.hasPrefix("iPad") {
-                return version >= 14.5
-            }
-
-            if hardware.hasPrefix("iPhone") {
-                return version >= 14.2
-            }
+        if let boot = fm.firstEntry(atPath: "/private/preboot", nameLength: 96) {
+            return access("\(boot)/\(txmFirmware)", F_OK) == 0
         }
-
         return false
     }
 
-    var hasTXM: Bool {
-        if UserDefaults.standard.bool(forKey: "forceTXM") {
+    var detectedTXM: Bool {
+        if isiOSAppOnMac { return false }
+
+        if #available(iOS 27.0, *) {
+            if let chip = chipInfo(), chip.series == .a { return chip.number > 12 } // A12 = last non-TXM
             return true
         }
 
-        return detectedTXM
+        if #available(iOS 26.6, *), !hasTXMClassic {
+            guard let chip = chipInfo() else { return false }
+            return chip.series == .m ? chip.number >= 2 : chip.number >= 15 // M2+ / A15+
+        }
+
+        return hasTXMClassic
     }
 
-    private func hardwareIdentifier() -> String {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-
-        return withUnsafePointer(to: &systemInfo.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
-                String(cString: $0)
-            }
-        }
+    var hasTXM: Bool {
+        UserDefaults.standard.bool(forKey: "forceTXM") || detectedTXM
     }
 
-    private func deviceVersion(from identifier: String) -> Double? {
-        let pattern: String
+    private func chipInfo() -> ChipInfo? {
+        guard let name = MTLCreateSystemDefaultDevice()?.name.uppercased(),
+              let regex = try? NSRegularExpression(pattern: #"APPLE\s+([MA])(\d+)"#),
+              let m = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+              let letterR = Range(m.range(at: 1), in: name),
+              let numR = Range(m.range(at: 2), in: name),
+              let number = Int(name[numR])
+        else { return nil }
 
-        if identifier.hasPrefix("iPhone") {
-            pattern = #"iPhone(\d+),(\d+)"#
-        } else if identifier.hasPrefix("iPad") {
-            pattern = #"iPad(\d+),(\d+)"#
-        } else {
-            return nil
-        }
-
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(
-                  in: identifier,
-                  range: NSRange(identifier.startIndex..., in: identifier)
-              ),
-              let majorRange = Range(match.range(at: 1), in: identifier),
-              let minorRange = Range(match.range(at: 2), in: identifier),
-              let major = Double(identifier[majorRange]),
-              let minor = Double(identifier[minorRange])
-        else {
-            return nil
-        }
-
-        let minorDigits = String(Int(minor)).count
-        return major + minor / pow(10.0, Double(minorDigits))
+        return ChipInfo(series: name[letterR] == "M" ? .m : .a, number: number)
     }
 }
